@@ -1,0 +1,14 @@
+# Compiled output from the simulation harness
+*.exe
+*.o
+*.obj
+build/
+
+# Editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Note: out/*.json (the generated action logs) ARE tracked on purpose,
+# so the viewer works for anyone who clones this repo without a compiler.
