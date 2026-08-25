@@ -12,3 +12,9 @@ desktop.ini
 
 # Note: out/*.json (the generated action logs) ARE tracked on purpose,
 # so the viewer works for anyone who clones this repo without a compiler.
+
+# --- Teacher-supplied competition template: NOT published ---
+# The seven template files live locally in reference/ so the mock can be
+# written against their exact interface, but they are not our work to
+# redistribute. See README "Attribution". This is a reversible decision.
+reference/
