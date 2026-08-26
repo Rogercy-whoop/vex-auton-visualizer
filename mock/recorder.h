@@ -33,6 +33,15 @@ public:
 };
 
 void record(const std::string& json_object);
+
+// Builds one routine's complete log as a JSON string.
+std::string build_json(const std::string& routine_name);
+
+// Clears the action list and the simulated clock so that several routines can
+// be run back to back in one process without contaminating each other.
+void reset();
+
+size_t action_count();
 void write_log(const std::string& path, const std::string& routine_name);
 
 // Chassis geometry, captured from the Drive constructor so the viewer reads

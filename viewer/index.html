@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VEX Auton Visualizer — 117V</title>
+<style>
+  :root {
+    --bg:      #0e1116;
+    --panel:   #161a21;
+    --line:    #262c35;
+    --text:    #dbe2ea;
+    --muted:   #8b929c;
+    --accent:  #5cc8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  #app { display: flex; height: 100%; }
+
+  #side {
+    width: 250px; flex: 0 0 250px;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 14px; overflow-y: auto;
+  }
+  h1 { font-size: 14px; margin: 0 0 2px; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 11px; margin-bottom: 16px; }
+  h2 {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); margin: 18px 0 7px; font-weight: 600;
+  }
+  button {
+    background: #222831; color: var(--text);
+    border: 1px solid var(--line); border-radius: 5px;
+    padding: 6px 11px; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  button:hover { background: #2b323d; border-color: #39424f; }
+
+  .kv { display: flex; justify-content: space-between; padding: 2px 0; font-size: 12px; }
+  .kv span:first-child { color: var(--muted); }
+  .kv span:last-child  { font-family: ui-monospace, Consolas, monospace; }
+
+  .hint { color: var(--muted); font-size: 11px; margin: 3px 0; }
+  .hint kbd {
+    background: #222831; border: 1px solid var(--line); border-radius: 3px;
+    padding: 0 4px; font-family: ui-monospace, Consolas, monospace; font-size: 10px;
+  }
+  .note {
+    margin-top: 18px; padding: 9px 10px;
+    background: #14202b; border-left: 2px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+    color: var(--muted); font-size: 11px;
+  }
+
+  #stage { flex: 1; position: relative; min-width: 0; }
+  #field { width: 100%; height: 100%; display: block; cursor: crosshair; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <aside id="side">
+    <h1>VEX Auton Visualizer</h1>
+    <div class="sub">Team 117V · Push Back 2025-26</div>
+
+    <h2>View</h2>
+    <button id="btn-fit">Fit field</button>
+    <div class="kv" style="margin-top:8px"><span>zoom</span><span id="zoom">—</span></div>
+
+    <h2>Controls</h2>
+    <div class="hint"><kbd>drag</kbd> pan</div>
+    <div class="hint"><kbd>scroll</kbd> zoom at cursor</div>
+    <div class="hint"><kbd>shift</kbd> + drag — measure</div>
+
+    <h2>Field</h2>
+    <div class="kv"><span>playing floor</span><span>140.4 in</span></div>
+    <div class="kv"><span>tile</span><span>23.4 in</span></div>
+    <div class="kv"><span>origin</span><span>bottom-left</span></div>
+    <div class="kv"><span>heading 0°</span><span>+Y, CW+</span></div>
+
+    <div class="note">
+      Phase 4a — field only. The path, the robot and the timeline arrive in 4b.
+      Every dimension is taken from the official 276-9142 field drawings.
+    </div>
+  </aside>
+
+  <main id="stage">
+    <canvas id="field"></canvas>
+  </main>
+
+</div>
+
+<script src="field.js"></script>
+<script src="viewer.js"></script>
+</body>
+</html>

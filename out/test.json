@@ -1,8 +1,8 @@
 {
   "routine": "test",
-  "duration_ms": 0,
+  "duration_ms": 900,
   "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360,"robot_length_in":15,"robot_width_in":13.5,"track_width_in":12},
   "actions": [
-    {"i":0,"t_ms":0,"type":"drive","distance_in":11.811,"heading_deg":-135,"drive_max_v":9,"heading_max_v":4,"settle_error":0,"settle_time":0,"timeout":0,"drive_kp":0,"drive_ki":0,"drive_kd":0,"drive_starti":0,"heading_kp":0,"heading_ki":0,"heading_kd":0,"heading_starti":0}
+    {"i":0,"t_ms":0,"type":"drive","distance_in":11.811,"heading_deg":-135,"drive_max_v":9,"heading_max_v":4,"settle_error":0,"settle_time":180,"timeout":900,"drive_kp":0.7,"drive_ki":0.01,"drive_kd":0,"drive_starti":0,"heading_kp":0.1,"heading_ki":0.002,"heading_kd":0.7,"heading_starti":0}
   ]
 }

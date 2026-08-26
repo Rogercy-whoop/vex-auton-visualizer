@@ -15,7 +15,7 @@ set PATH=%DEVKIT%;%PATH%
 set SRC=reference\117V-test-2026-07-27T06-53-04\src
 
 set ROUTINE=%1
-if "%ROUTINE%"=="" set ROUTINE=zuo
+if "%ROUTINE%"=="" set ROUTINE=--all
 
 echo [1/2] compiling...
 g++ -std=c++17 -I mock -o vexsim.exe ^

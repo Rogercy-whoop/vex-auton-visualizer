@@ -46,12 +46,8 @@ void record(const std::string& json_object) {
   actions.push_back(merged);
 }
 
-void write_log(const std::string& path, const std::string& routine_name) {
-  std::ofstream out(path.c_str());
-  if (!out) {
-    std::fprintf(stderr, "ERROR: cannot open %s for writing\n", path.c_str());
-    return;
-  }
+std::string build_json(const std::string& routine_name) {
+  std::ostringstream out;
   out << "{\n";
   out << "  \"routine\": \"" << routine_name << "\",\n";
   out << "  \"duration_ms\": " << vex::sim_now_ms() << ",\n";
@@ -67,9 +63,26 @@ void write_log(const std::string& path, const std::string& routine_name) {
   for (size_t i = 0; i < actions.size(); ++i) {
     out << "    " << actions[i] << (i + 1 < actions.size() ? "," : "") << "\n";
   }
-  out << "  ]\n}\n";
-  std::printf("wrote %s  (%zu actions, %.0f ms simulated)\n",
-              path.c_str(), actions.size(), vex::sim_now_ms());
+  out << "  ]\n}";
+  return out.str();
+}
+
+// Running several routines in one process needs the log and the clock wiped
+// between them, or routine two would inherit routine one's timeline.
+void reset() {
+  actions.clear();
+  vex::sim_reset();
+}
+
+size_t action_count() { return actions.size(); }
+
+void write_log(const std::string& path, const std::string& routine_name) {
+  std::ofstream out(path.c_str());
+  if (!out) {
+    std::fprintf(stderr, "ERROR: cannot open %s for writing\n", path.c_str());
+    return;
+  }
+  out << build_json(routine_name) << "\n";
 }
 
 }  // namespace sim

@@ -15,6 +15,7 @@ namespace vex {
 static double clock_ms = 0;
 double sim_now_ms()             { return clock_ms; }
 void   sim_advance_ms(double m) { clock_ms += m; }
+void   sim_reset()              { clock_ms = 0; }
 
 // ---------------------------------------------------------------- motor -----
 motor::motor(int, gearSetting, bool, const char* nm) : name(nm) {}

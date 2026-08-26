@@ -45,6 +45,7 @@ enum portType {
 // print a meaningful number instead of zero.
 double sim_now_ms();
 void   sim_advance_ms(double ms);
+void   sim_reset();
 
 // --------------------------------------------------------------- motor -----
 class motor {
