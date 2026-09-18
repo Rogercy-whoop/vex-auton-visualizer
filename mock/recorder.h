@@ -46,13 +46,12 @@ void write_log(const std::string& path, const std::string& routine_name);
 
 // Chassis geometry, captured from the Drive constructor so the viewer reads
 // the real numbers out of main.cpp rather than having them retyped.
+// Only what the code itself knows. Robot dimensions are not in the code, so
+// they live in viewer/robot.js and nowhere else.
 struct Geometry {
   double wheel_diameter = 0;
   double wheel_ratio    = 0;
   double gyro_scale     = 0;
-  double robot_length_in = 15.0;   // measured estimate -- see README
-  double robot_width_in  = 13.5;
-  double track_width_in  = 12.0;   // wheel centre to wheel centre
 };
 extern Geometry geometry;
 

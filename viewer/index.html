@@ -8,99 +8,73 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --stage:  #e9ecf1;
-    --panel:  #ffffff;
-    --gutter: #f4f6f9;
-    --line:   #e2e6ec;
-    --hair:   #c9d0d9;
-    --text:   #1c2128;
-    --muted:  #6b7581;
-    --accent: #2f6fb0;
-    --accent-soft: #eaf2fa;
-    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.06);
+    --stage: #e9ecf1; --panel: #ffffff; --gutter: #f4f6f9; --line: #e2e6ec; --hair: #c9d0d9;
+    --text: #1c2128; --muted: #6b7581; --accent: #2f6fb0; --accent-soft: #eaf2fa;
+    --ok: #1f8a4c; --bad: #c8273a; --bad-soft: #fdecee;
   }
   :root[data-theme="dark"] {
-    --stage:  #0d1015;
-    --panel:  #141920;
-    --gutter: #10151b;
-    --line:   #232a33;
-    --hair:   #39434f;
-    --text:   #dfe6ee;
-    --muted:  #8792a0;
-    --accent: #5aa9f0;
-    --accent-soft: #16222f;
-    --shadow: none;
+    --stage: #0d1015; --panel: #141920; --gutter: #10151b; --line: #232a33; --hair: #39434f;
+    --text: #dfe6ee; --muted: #8792a0; --accent: #5aa9f0; --accent-soft: #16222f;
+    --ok: #4cc27a; --bad: #ef5b6c; --bad-soft: #2a171b;
   }
-
   * { box-sizing: border-box; }
-  html, body {
-    margin: 0; height: 100%; overflow: hidden;
-    background: var(--stage); color: var(--text);
-    font: 400 13px/1.55 Inter, ui-sans-serif, "Segoe UI", system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--stage); color: var(--text);
+    font: 400 13px/1.5 Inter, ui-sans-serif, "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   #app { display: flex; height: 100%; }
 
-  /* ---------------------------------------------------------- sidebar -- */
-  #side {
-    width: 268px; flex: 0 0 268px;
-    background: var(--panel);
-    border-right: 1px solid var(--line);
-    display: flex; flex-direction: column;
-  }
-  .head { padding: 18px 20px 14px; border-bottom: 1px solid var(--line); }
+  #side { width: 300px; flex: 0 0 300px; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  .head { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
   .head h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: -.01em; }
-  .head p  { margin: 3px 0 0; font-size: 11px; color: var(--muted); }
+  .head p  { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
+  .body { flex: 1; overflow-y: auto; padding: 2px 18px 24px; }
+  h2 { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin: 18px 0 8px; }
 
-  .body { flex: 1; overflow-y: auto; padding: 4px 20px 24px; }
-
-  h2 {
-    font-size: 10px; font-weight: 600; letter-spacing: .07em;
-    text-transform: uppercase; color: var(--muted);
-    margin: 22px 0 9px;
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  button, select {
+    flex: 1; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 10px; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
   }
-
-  .row { display: flex; gap: 6px; flex-wrap: wrap; }
-  button {
-    flex: 1; min-width: 0;
-    background: var(--panel); color: var(--text);
-    border: 1px solid var(--line); border-radius: 6px;
-    padding: 6px 10px; font: inherit; font-size: 12px; font-weight: 500;
-    cursor: pointer; transition: background .12s, border-color .12s;
-    white-space: nowrap;
-  }
-  button:hover  { background: var(--accent-soft); border-color: var(--hair); }
+  button:hover { background: var(--accent-soft); border-color: var(--hair); }
   button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-
-  .kv {
-    display: flex; justify-content: space-between; align-items: baseline;
-    padding: 3px 0; font-size: 12px;
+  select { width: 100%; }
+  input[type=number] {
+    width: 100%; background: var(--gutter); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 8px; font: 12px "JetBrains Mono", ui-monospace, monospace;
   }
-  .kv > span:first-child { color: var(--muted); }
-  .kv > span:last-child  {
-    font-family: "JetBrains Mono", ui-monospace, Consolas, monospace;
-    font-size: 11.5px; font-variant-numeric: tabular-nums;
-  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  label.chk { display: flex; align-items: center; gap: 7px; font-size: 12px; padding: 2px 0; cursor: pointer; }
+  label.chk input { accent-color: var(--accent); }
 
-  .hint { display: flex; gap: 8px; align-items: center; padding: 2.5px 0;
-          font-size: 11.5px; color: var(--muted); }
-  kbd {
-    background: var(--gutter); border: 1px solid var(--line);
-    border-bottom-width: 2px; border-radius: 4px;
-    padding: 1px 5px; font-family: "JetBrains Mono", monospace; font-size: 10px;
-    color: var(--text); white-space: nowrap;
-  }
+  .kv { display: flex; justify-content: space-between; align-items: baseline; padding: 3px 0; font-size: 12px; gap: 8px; }
+  .kv > span:first-child { color: var(--muted); white-space: nowrap; }
+  .kv > span:last-child { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11.5px; font-variant-numeric: tabular-nums; text-align: right; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .grid3 .lab { font-size: 10px; color: var(--muted); margin-bottom: 2px; }
 
-  .note {
-    margin-top: 20px; padding: 10px 12px;
-    background: var(--accent-soft); border-left: 2px solid var(--accent);
-    border-radius: 0 6px 6px 0; font-size: 11.5px; color: var(--muted);
-  }
-  .note b { color: var(--text); font-weight: 600; }
+  .hint { display: flex; gap: 8px; align-items: center; padding: 2px 0; font-size: 11.5px; color: var(--muted); }
+  kbd { background: var(--gutter); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px;
+        font-family: "JetBrains Mono", monospace; font-size: 10px; color: var(--text); white-space: nowrap; }
 
-  /* ------------------------------------------------------------ stage -- */
-  #stage { flex: 1; min-width: 0; position: relative; }
-  #field { width: 100%; height: 100%; display: block; cursor: crosshair; }
+  .warn { font-size: 12px; padding: 6px 9px; border-radius: 6px; }
+  .warn.ok  { background: var(--accent-soft); color: var(--ok); }
+  .warn.bad { background: var(--bad-soft); color: var(--bad); font-weight: 500; }
+  .sum { font-size: 11.5px; color: var(--muted); padding: 1px 0; }
+
+  table { width: 100%; border-collapse: collapse; font: 11px "JetBrains Mono", ui-monospace, monospace; margin-top: 6px; }
+  th { text-align: right; color: var(--muted); font-weight: 500; padding: 2px 4px; border-bottom: 1px solid var(--line); }
+  th:nth-child(1), th:nth-child(2), td:nth-child(1), td:nth-child(2) { text-align: left; }
+  td { text-align: right; padding: 2px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  tr:hover td { background: var(--accent-soft); }
+  tr.bad td:nth-child(5) { color: var(--bad); font-weight: 600; }
+  tr.hung td { color: var(--bad); }
+
+  #stage { flex: 1; min-width: 0; position: relative; display: flex; flex-direction: column; }
+  #field { flex: 1; width: 100%; display: block; cursor: crosshair; }
+  #bar { height: 44px; background: var(--panel); border-top: 1px solid var(--line); display: flex; align-items: center; gap: 10px; padding: 0 14px; }
+  #bar button { flex: 0 0 auto; }
+  #timeline { flex: 1; }
+  #time-readout { font: 11.5px "JetBrains Mono", ui-monospace, monospace; color: var(--muted); white-space: nowrap; min-width: 240px; text-align: right; }
+  #speed { flex: 0 0 auto; width: 64px; }
 </style>
 </head>
 <body>
@@ -111,59 +85,84 @@
       <h1>VEX Auton Visualizer</h1>
       <p>Team 117V · Push Back 2025-26</p>
     </div>
-
     <div class="body">
 
-      <h2>View</h2>
-      <div class="row">
-        <button id="btn-fit">Fit</button>
-        <button id="btn-theme">Dark</button>
-      </div>
-      <div class="kv" style="margin-top:8px"><span>zoom</span><span id="zoom">—</span></div>
+      <h2>Routine</h2>
+      <select id="routine"></select>
+      <div class="sum" id="sum-time" style="margin-top:6px"></div>
+      <div class="sum" id="sum-moves"></div>
+      <div class="sum" id="sum-end"></div>
 
-      <h2>Cursor</h2>
-      <div class="kv"><span>inches</span><span id="cursor-in">—</span></div>
-      <div class="kv"><span>tile</span><span id="cursor-tile">—</span></div>
+      <h2>Start pose</h2>
+      <div class="grid3">
+        <div><div class="lab">x (in)</div><input id="in-x" type="number" step="0.5"></div>
+        <div><div class="lab">y (in)</div><input id="in-y" type="number" step="0.5"></div>
+        <div><div class="lab">heading °</div><input id="in-h" type="number" step="1"></div>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button id="btn-reset-start">Reset to saved</button>
+        <button id="btn-default-start">Default</button>
+      </div>
+      <div class="hint" style="margin-top:6px"><kbd>drag</kbd> the ghost robot to move it</div>
+      <div class="hint"><kbd>drag</kbd> the blue knob to rotate · <kbd>shift</kbd> snaps 15°</div>
+      <div class="hint"><kbd>alt</kbd> while dragging snaps to half tiles</div>
+
+      <h2>Warnings</h2>
+      <div id="warn-bounds" class="warn ok">—</div>
+
+      <h2>Layers</h2>
+      <label class="chk"><input id="chk-sim" type="checkbox" checked> simulated path (PID + timeouts)</label>
+      <label class="chk"><input id="chk-intent" type="checkbox" checked> intent path (what the code says)</label>
+      <label class="chk"><input id="chk-events" type="checkbox" checked> pneumatic / intake events</label>
+
+      <h2>Moves — asked vs achieved</h2>
+      <table>
+        <thead><tr><th>#</th><th>type</th><th>asked</th><th>got</th><th>gap</th><th>ms</th><th>exit</th></tr></thead>
+        <tbody id="moves"></tbody>
+      </table>
+      <div class="hint" style="margin-top:6px">click a row to jump the timeline there · gap &gt; 2 highlighted</div>
+
+      <h2>Drivetrain model</h2>
+      <div class="kv"><span>load factor</span><span id="sl-load-v"></span></div>
+      <input id="sl-load" type="range" min="0.4" max="1.0" step="0.01">
+      <div class="kv"><span>response τ</span><span id="sl-tau-v"></span></div>
+      <input id="sl-tau" type="range" min="0.02" max="0.40" step="0.01">
+      <div class="kv"><span>dead band</span><span id="sl-dead-v"></span></div>
+      <input id="sl-dead" type="range" min="0" max="3" step="0.05">
+      <div class="hint">the only three physical constants in the model — see robot.js</div>
 
       <h2>Measure</h2>
-      <div class="row">
-        <button id="btn-ruler">Straight-edge</button>
-        <button id="btn-clear">Clear lines</button>
-      </div>
-      <div class="kv" style="margin-top:8px"><span>lines</span><span id="measure-count">none</span></div>
+      <div class="row"><button id="btn-ruler">Straight-edge</button><button id="btn-clear">Clear lines</button></div>
+      <div class="kv" style="margin-top:6px"><span>lines</span><span id="measure-count">none</span></div>
       <div class="kv"><span>edge</span><span id="ruler-readout">off</span></div>
+      <div class="hint"><kbd>shift</kbd>+drag draws a measurement · <kbd>right-click</kbd> deletes one</div>
 
-      <h2>Controls</h2>
-      <div class="hint"><kbd>drag</kbd> pan the field</div>
-      <div class="hint"><kbd>scroll</kbd> zoom at cursor</div>
-      <div class="hint"><kbd>shift</kbd>+drag draw a measurement</div>
-      <div class="hint"><kbd>right-click</kbd> delete a measurement</div>
-      <div class="hint"><kbd>shift</kbd> while rotating the edge snaps to 15°</div>
-
-      <h2>Field</h2>
-      <div class="kv"><span>playing floor</span><span>140.4 in</span></div>
-      <div class="kv"><span>tile</span><span>23.4 in</span></div>
-      <div class="kv"><span>block</span><span>3.23 in</span></div>
-      <div class="kv"><span>origin</span><span>bottom-left</span></div>
-      <div class="kv"><span>heading 0°</span><span>+Y, CW+</span></div>
-
-      <div class="note">
-        <b>Phase 4a — field only.</b><br>
-        Geometry is strictly top-down so every position on screen is a true
-        position on the field; depth comes from shading, never from offsetting
-        anything. Path, robot and timeline arrive in 4b.
-      </div>
+      <h2>View</h2>
+      <div class="row"><button id="btn-fit">Fit</button><button id="btn-theme">Dark</button></div>
+      <div class="kv" style="margin-top:6px"><span>zoom</span><span id="zoom">—</span></div>
+      <div class="kv"><span>cursor (in)</span><span id="cursor-in">—</span></div>
+      <div class="kv"><span>cursor (tile)</span><span id="cursor-tile">—</span></div>
 
     </div>
   </aside>
 
   <main id="stage">
     <canvas id="field"></canvas>
+    <div id="bar">
+      <button id="btn-restart">⟲</button>
+      <button id="btn-play">Play</button>
+      <select id="speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+      <input id="timeline" type="range" min="0" max="1000" step="10" value="0">
+      <div id="time-readout">—</div>
+    </div>
   </main>
 
 </div>
 
+<script src="../out/logs.js"></script>
+<script src="robot.js"></script>
 <script src="field.js"></script>
+<script src="sim.js"></script>
 <script src="viewer.js"></script>
 </body>
 </html>

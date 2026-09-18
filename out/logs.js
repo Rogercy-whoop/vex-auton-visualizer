@@ -3,7 +3,7 @@ window.VEXSIM_LOGS = {
   "zuo": {
   "routine": "zuo",
   "duration_ms": 15200,
-  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360,"robot_length_in":15,"robot_width_in":13.5,"track_width_in":12},
+  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360},
   "actions": [
     {"i":0,"t_ms":0,"type":"config","loop":"drive","max_v":12,"kp":0.7,"ki":0.01,"kd":0,"starti":0},
     {"i":1,"t_ms":0,"type":"config","loop":"heading","max_v":12,"kp":0.1,"ki":0.002,"kd":0.7,"starti":0},
@@ -66,7 +66,7 @@ window.VEXSIM_LOGS = {
   "superzuo": {
   "routine": "superzuo",
   "duration_ms": 15050,
-  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360,"robot_length_in":15,"robot_width_in":13.5,"track_width_in":12},
+  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360},
   "actions": [
     {"i":0,"t_ms":0,"type":"config","loop":"drive","max_v":12,"kp":0.7,"ki":0.01,"kd":0,"starti":0},
     {"i":1,"t_ms":0,"type":"config","loop":"heading","max_v":12,"kp":0.1,"ki":0.002,"kd":0.7,"starti":0},
@@ -128,7 +128,7 @@ window.VEXSIM_LOGS = {
   "lanyou": {
   "routine": "lanyou",
   "duration_ms": 12400,
-  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360,"robot_length_in":15,"robot_width_in":13.5,"track_width_in":12},
+  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360},
   "actions": [
     {"i":0,"t_ms":0,"type":"config","loop":"drive","max_v":12,"kp":0.7,"ki":0.01,"kd":0,"starti":0},
     {"i":1,"t_ms":0,"type":"config","loop":"heading","max_v":12,"kp":0.1,"ki":0.002,"kd":0.7,"starti":0},
@@ -184,7 +184,7 @@ window.VEXSIM_LOGS = {
   "superyou": {
   "routine": "superyou",
   "duration_ms": 15600,
-  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360,"robot_length_in":15,"robot_width_in":13.5,"track_width_in":12},
+  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360},
   "actions": [
     {"i":0,"t_ms":0,"type":"config","loop":"drive","max_v":12,"kp":0.7,"ki":0.01,"kd":0,"starti":0},
     {"i":1,"t_ms":0,"type":"config","loop":"heading","max_v":12,"kp":0.1,"ki":0.002,"kd":0.7,"starti":0},
@@ -254,7 +254,7 @@ window.VEXSIM_LOGS = {
   "skillszuo": {
   "routine": "skillszuo",
   "duration_ms": 63770,
-  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360,"robot_length_in":15,"robot_width_in":13.5,"track_width_in":12},
+  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360},
   "actions": [
     {"i":0,"t_ms":0,"type":"config","loop":"drive","max_v":12,"kp":0.7,"ki":0.01,"kd":0,"starti":0},
     {"i":1,"t_ms":0,"type":"config","loop":"heading","max_v":12,"kp":0.1,"ki":0.002,"kd":0.7,"starti":0},
@@ -382,7 +382,7 @@ window.VEXSIM_LOGS = {
   "test": {
   "routine": "test",
   "duration_ms": 900,
-  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360,"robot_length_in":15,"robot_width_in":13.5,"track_width_in":12},
+  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360},
   "actions": [
     {"i":0,"t_ms":0,"type":"drive","distance_in":11.811,"heading_deg":-135,"drive_max_v":9,"heading_max_v":4,"settle_error":0,"settle_time":180,"timeout":900,"drive_kp":0.7,"drive_ki":0.01,"drive_kd":0,"drive_starti":0,"heading_kp":0.1,"heading_ki":0.002,"heading_kd":0.7,"heading_starti":0}
   ]

@@ -55,9 +55,6 @@ std::string build_json(const std::string& routine_name) {
       << "\"wheel_diameter_in\":"  << geometry.wheel_diameter
       << ",\"wheel_ratio\":"       << geometry.wheel_ratio
       << ",\"gyro_scale\":"        << geometry.gyro_scale
-      << ",\"robot_length_in\":"   << geometry.robot_length_in
-      << ",\"robot_width_in\":"    << geometry.robot_width_in
-      << ",\"track_width_in\":"    << geometry.track_width_in
       << "},\n";
   out << "  \"actions\": [\n";
   for (size_t i = 0; i < actions.size(); ++i) {

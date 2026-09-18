@@ -1,7 +1,7 @@
 {
   "routine": "superzuo",
   "duration_ms": 15050,
-  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360,"robot_length_in":15,"robot_width_in":13.5,"track_width_in":12},
+  "geometry": {"wheel_diameter_in":3.25,"wheel_ratio":0.75,"gyro_scale":360},
   "actions": [
     {"i":0,"t_ms":0,"type":"config","loop":"drive","max_v":12,"kp":0.7,"ki":0.01,"kd":0,"starti":0},
     {"i":1,"t_ms":0,"type":"config","loop":"heading","max_v":12,"kp":0.1,"ki":0.002,"kd":0.7,"starti":0},
