@@ -15,10 +15,16 @@
 //    3. WORLD -- collide.js. The robot stops at goals, loaders and walls, and
 //       its encoders stop with it.
 //
-//  Everything runs in the ROBOT FRAME: start at (0,0) heading 0 with the gyro
-//  reading 0. Obstacles, however, live on the FIELD, so the simulation needs
-//  the start pose. Re-running on a drag is cheap (a few thousand ticks) and is
-//  the price of the robot no longer being able to drive through a goal.
+//  TWO HEADING FRAMES, and confusing them is the easiest bug in the project:
+//    - the GYRO frame is what autons.cpp talks in. The gyro is never zeroed, so
+//      it reads 0 wherever the robot happened to be placed.
+//    - the FIELD frame is what the geometry needs, because obstacles sit at
+//      fixed places on the field.
+//  They differ by exactly the start orientation. st.h is a field heading;
+//  st.hOff converts, once, at the top of each move.
+//
+//  Re-running on a drag costs a few thousand ticks and is the price of the
+//  robot no longer being able to drive through a goal.
 // ============================================================================
 
 const wrap180 = (a) => { while (a >= 180) a -= 360; while (a < -180) a += 360; return a; };
@@ -141,9 +147,15 @@ function noteContact(acc, c, t) {
 //  Move loops -- transcriptions of drive.cpp
 // ---------------------------------------------------------------------------
 function runDrive(st, a, R, ticks, moveIdx, world) {            // drive.cpp:191-225
+  // The code's headings are GYRO headings, and the gyro reads 0 wherever the
+  // robot was placed. st.h is a FIELD heading, because obstacles live on the
+  // field. The two differ by exactly the start orientation, so every commanded
+  // heading is converted once, here.
+  const target = a.heading_deg + st.hOff;
+
   const drivePID   = new PID(a.distance_in, a.drive_kp, a.drive_ki, a.drive_kd,
                              a.drive_starti, a.settle_error, a.settle_time, a.timeout);
-  const headingPID = new PID(wrap180(a.heading_deg - st.h), a.heading_kp, a.heading_ki,
+  const headingPID = new PID(wrap180(target - st.h), a.heading_kp, a.heading_ki,
                              a.heading_kd, a.heading_starti);
   const startAvg = (st.encL + st.encR) / 2;
   const t0 = st.t;
@@ -152,7 +164,7 @@ function runDrive(st, a, R, ticks, moveIdx, world) {            // drive.cpp:191
   while (!drivePID.is_settled()) {
     const avg = (st.encL + st.encR) / 2;
     const driveErr   = a.distance_in + startAvg - avg;
-    const headingErr = wrap180(a.heading_deg - st.h);
+    const headingErr = wrap180(target - st.h);
     const dOut = clamp(drivePID.compute(driveErr),     -a.drive_max_v,   a.drive_max_v);
     const hOut = clamp(headingPID.compute(headingErr), -a.heading_max_v, a.heading_max_v);
     contact = noteContact(contact, stepChassis(st, dOut + hOut, dOut - hOut, R, world), st.t);
@@ -165,19 +177,21 @@ function runDrive(st, a, R, ticks, moveIdx, world) {            // drive.cpp:191
   return {
     type: 'drive', i: a.i, ms: st.t - t0,
     asked: a.distance_in, achieved, gap: a.distance_in - achieved,
-    headingAsked: a.heading_deg, headingEnd: st.h, headingGap: wrap180(a.heading_deg - st.h),
+    headingAsked: a.heading_deg, headingEnd: st.h - st.hOff,
+    headingGap: wrap180(target - st.h),
     exit: hung ? 'hung' : drivePID.exitReason(), timeout: a.timeout, contact,
   };
 }
 
 function runTurn(st, a, R, ticks, moveIdx, world) {             // drive.cpp:140-157
-  const pid = new PID(wrap180(a.heading_deg - st.h), a.turn_kp, a.turn_ki, a.turn_kd,
+  const target = a.heading_deg + st.hOff;      // gyro heading -> field heading
+  const pid = new PID(wrap180(target - st.h), a.turn_kp, a.turn_ki, a.turn_kd,
                       a.turn_starti, a.settle_error, a.settle_time, a.timeout);
   const t0 = st.t;
   let hung = false, contact = null;
 
   while (!pid.is_settled()) {
-    const err = wrap180(a.heading_deg - st.h);
+    const err = wrap180(target - st.h);
     const out = clamp(pid.compute(err), -a.turn_max_v, a.turn_max_v);
     contact = noteContact(contact, stepChassis(st, out, -out, R, world), st.t);
     ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx });
@@ -187,7 +201,8 @@ function runTurn(st, a, R, ticks, moveIdx, world) {             // drive.cpp:140
 
   return {
     type: 'turn', i: a.i, ms: st.t - t0,
-    headingAsked: a.heading_deg, headingEnd: st.h, headingGap: wrap180(a.heading_deg - st.h),
+    headingAsked: a.heading_deg, headingEnd: st.h - st.hOff,
+    headingGap: wrap180(target - st.h),
     exit: hung ? 'hung' : pid.exitReason(), timeout: a.timeout, contact,
   };
 }
@@ -237,7 +252,8 @@ function simulate(log, R, start, opts) {
   const hooks = opts.hooks || new Set();
   const obstacles = buildObstacles();
 
-  const st = { x: start.x, y: start.y, h: start.h, sL: 0, sR: 0, encL: 0, encR: 0, t: 0 };
+  const st = { x: start.x, y: start.y, h: start.h, hOff: start.h,
+               sL: 0, sR: 0, encL: 0, encR: 0, t: 0 };
   const ticks = [{ t: 0, x: st.x, y: st.y, h: st.h, move: -1 }];
   const moves = [], events = [], contacts = [];
   let abort = null;
