@@ -104,7 +104,7 @@ const THEMES = {
     glass: 'rgba(226,232,240,0.46)', glassEdge: 'rgba(58,68,80,0.55)',
     glassSide: 'rgba(168,178,190,0.80)', glassHi: 'rgba(255,255,255,0.75)',
     slot: 'rgba(78,88,101,0.38)',
-    tubeSide: '#9aa4b2', tubeGlass: 'rgba(238,243,249,0.30)', tubeTop: 'rgba(214,223,233,0.88)',
+    tubeSide: '#9aa4b2', tubeGlass: 'rgba(238,243,249,0.14)', tubeTop: 'rgba(214,223,233,0.55)',
     bolt: 'rgba(40,46,54,0.55)',
     strut: '#e0892d', strutSide: '#a8621b',
     red: '#d9283c', redSide: '#8e1a27', blue: '#2492e6', blueSide: '#155f9a',
@@ -118,7 +118,7 @@ const THEMES = {
     glass: 'rgba(208,218,230,0.40)', glassEdge: 'rgba(16,20,26,0.62)',
     glassSide: 'rgba(128,140,154,0.78)', glassHi: 'rgba(255,255,255,0.60)',
     slot: 'rgba(18,22,28,0.50)',
-    tubeSide: '#78838f', tubeGlass: 'rgba(226,234,243,0.26)', tubeTop: 'rgba(186,197,210,0.85)',
+    tubeSide: '#78838f', tubeGlass: 'rgba(226,234,243,0.12)', tubeTop: 'rgba(186,197,210,0.50)',
     bolt: 'rgba(10,13,17,0.6)',
     strut: '#d9822b', strutSide: '#96581a',
     red: '#e0243c', redSide: '#8c1625', blue: '#2196f3', blueSide: '#125b95',
@@ -345,7 +345,9 @@ function drawBlock(ctx, b, alpha, z0, sizeScale) {
   ctx.save();
   if (alpha !== undefined) ctx.globalAlpha = alpha;
   if (!lo) withShadow(ctx, FIELD.BLOCK.height, c => pathOf(c, base));
-  const top = drawPrism(ctx, base, lo, hi, sideCol, col, 'rgba(0,0,0,0.18)');
+  // The outline is firm rather than a hairline: in a loader tube the blocks
+  // overlap almost completely, and the edges are the only way to count them.
+  const top = drawPrism(ctx, base, lo, hi, sideCol, col, 'rgba(0,0,0,0.32)');
   const c = centroid(top);
   ctx.fillStyle = 'rgba(255,255,255,0.20)';
   pathOf(ctx, octPts(c.x - S * 0.055, c.y + S * 0.055, S * 0.44)); ctx.fill();
@@ -500,10 +502,16 @@ function drawLoader(ctx, lx, ly, blocks) {
 
   ctx.fillStyle = P.tubeSide; pathOf(ctx, hull); ctx.fill();          // solid body
 
+  // A block is 3.23 in across in a 4.17 in tube, so it very nearly fills it and
+  // is drawn close to true size. Six of them span 21 in of HEIGHT, which from
+  // overhead is only about 0.6 in of visual separation each -- so they overlap
+  // almost entirely and read as one packed column, exactly as in the official
+  // render. The count is still legible two ways: the firm outline on each
+  // block, and the column growing visibly shorter as the intake empties it.
   ctx.save();
   pathOf(ctx, hull); ctx.clip();
   const left = (blocks || []).slice().sort((a, b) => a.stack - b.stack);
-  left.forEach((b, k) => drawBlock(ctx, b, 1, 1.0 + k * 3.32, 0.74));  // gravity
+  left.forEach((b, k) => drawBlock(ctx, b, 1, 1.0 + k * 3.32, 0.90));  // gravity
   ctx.restore();
 
   ctx.fillStyle = P.tubeGlass; pathOf(ctx, hull); ctx.fill();         // plastic over them
