@@ -102,3 +102,36 @@ current one is not.
 - Verify the estimated block groups against the official drawing: the
   four three-block clusters near the centre goal, and the loader contents.
   The long-goal and park-zone groups are already confirmed by tick spacing.
+
+---
+
+## Added 2026-09-19 — deferred from the collision/rendering pass
+
+### Community contribution: letting other teams upload their routines
+The endgame for this project. Needs an architectural decision first; see the
+options discussed in the session. The constraint that makes it hard is that
+compiling C++ requires a compiler, and the project has deliberately never had
+a backend.
+
+### Mechanism modelling, in the order it would pay off
+1. **Blocks disappear when the intake wedge sweeps them.** Visual bookkeeping
+   only; the `hidden` argument to `drawField` already exists for it.
+2. **Descore bar.** The L-shaped aluminium hook on the robot's upper left
+   inserts into a goal's top slot and pushes blocks out the far side. The slot
+   is now drawn on both the long goals and the centre goal, and a move can be
+   marked as an intended hook engagement in the moves table. What is missing is
+   a rule for how many blocks shift per inch of insertion — that has to be
+   measured.
+3. **Loader intake.** A pneumatic PC plate drops, slides under the tube, and
+   the intake draws blocks down. Needs plate geometry and, critically, the
+   alignment tolerance that separates catching the tube from missing it.
+4. **Intake throughput.** Blocks per second against intake voltage. The only
+   item on this list that cannot be derived from the code at all.
+
+### Field detail still approximate
+- The four three-block clusters near the centre goal and the loader contents
+  are placed from the official render, not from tick marks. The long-goal,
+  park-zone and corner groups are confirmed by the 3.23 in block pitch.
+- Centre goal arm length is derived from reading 22.60 in as the full
+  tip-to-tip span, which puts the tips at 62.21 / 78.19 and matches the
+  reference drawing's tick marks. Worth confirming against a physical field.

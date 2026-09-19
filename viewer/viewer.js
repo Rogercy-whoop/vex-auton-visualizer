@@ -1,16 +1,14 @@
 // ============================================================================
-//  viewer/viewer.js  --  camera, routine playback, start-pose placement, tools
+//  viewer/viewer.js  --  camera, playback, start-pose placement, tools
 // ----------------------------------------------------------------------------
 //  Data flow:
-//     out/logs.js  ->  simulate(log, ROBOT)  ->  ticks in the ROBOT FRAME
-//                                                    |
-//                          start pose (x, y, h) -----+--> rigid transform
-//                                                    |
-//                                                    v
-//                                              drawn on the field
+//     out/logs.js  +  start pose  ->  simulate()  ->  ticks in FIELD coords
 //
-//  The simulation runs once per routine (and again only when a model slider
-//  moves). Dragging the start pose changes just the transform, so it is free.
+//  The start pose is an input to the simulation now, not a transform applied
+//  afterwards: the robot collides with real obstacles, so where it starts
+//  changes what it hits. Dragging therefore re-runs the simulation -- but only
+//  a routine or model change replays the drawing animation, because watching
+//  the line redraw on every mouse move would be noise, not feedback.
 // ============================================================================
 
 const canvas = document.getElementById('field');
@@ -40,119 +38,197 @@ function resize() {
 }
 
 // ---------------------------------------------------------------------------
-//  Routine, simulation, start pose
+//  Routine state
 // ---------------------------------------------------------------------------
 const LOGS = window.VEXSIM_LOGS || {};
 let routine = Object.keys(LOGS)[0] || null;
-let sim     = null;                       // result of simulate()
-let start   = { x: 24, y: 24, h: 0 };     // where robot-frame (0,0,0) sits on the field
-let timeMs  = 0;
-let playing = false;
-let lastFrame = 0;
+let sim = null;
+let start = { x: 24, y: 24, h: 0 };
+let hooks = new Set();                 // action indices whose goal contact is intended
+let timeMs = 0, playing = false, lastFrame = 0;
 let showIntent = true, showSim = true, showEvents = true;
+let reveal = 1, revealAnim = null;     // 0..1 progressive draw of the path
 
-const STORE = (name) => 'vexsim.start.' + name;
 const DEFAULT_START = { x: 24, y: 24, h: 0 };
+const KEY = { start: r => 'vexsim.start.' + r, presets: r => 'vexsim.presets.' + r, hooks: r => 'vexsim.hooks.' + r };
 
-function loadStart(name) {
-  try { const s = JSON.parse(localStorage.getItem(STORE(name))); if (s && isFinite(s.x)) return s; } catch (e) {}
-  return { ...DEFAULT_START };
-}
-function saveStart() {
-  try { localStorage.setItem(STORE(routine), JSON.stringify(start)); } catch (e) {}
-}
+const readJSON = (k, fallback) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fallback : v; } catch (e) { return fallback; } };
+const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-function runSim() {
+// ---------------------------------------------------------------------------
+//  Running the simulation
+// ---------------------------------------------------------------------------
+function runSim(animate) {
   if (!routine) return;
-  sim = simulate(LOGS[routine], ROBOT);
+  const t0 = performance.now();
+  sim = simulate(LOGS[routine], ROBOT, start, { hooks });
+  const took = performance.now() - t0;
+
   timeMs = Math.min(timeMs, sim.duration_ms);
   $('timeline').max = sim.duration_ms;
   buildMovesTable();
-  checkBounds();
+  buildWarnings();
+
+  if (animate) {
+    setStatus(`simulating ${routine} …`, true);
+    reveal = 0;
+    revealAnim = { t0: performance.now(), dur: 900 };
+    setTimeout(() => setStatus(`path simulated · ${sim.ticks.length} ticks · ${took.toFixed(0)} ms`, false), 950);
+  } else {
+    reveal = 1; revealAnim = null;
+  }
+}
+
+function setStatus(text, busy) {
+  const el = $('sim-status');
+  el.textContent = text;
+  el.classList.toggle('busy', !!busy);
 }
 
 function selectRoutine(name) {
   routine = name;
-  start = loadStart(name);
-  timeMs = 0; playing = false;
-  runSim();
+  start = readJSON(KEY.start(name), { ...DEFAULT_START });
+  hooks = new Set(readJSON(KEY.hooks(name), []));
+  timeMs = 0; playing = false; $('btn-play').textContent = 'Play';
   syncStartInputs();
+  buildPresets();
+  runSim(true);
   draw();
 }
 
-// robot frame -> field (rotate clockwise by start.h, then translate)
-function toFieldFrame(p) {
-  const a = start.h * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
-  return { x: start.x + p.x * ca + p.y * sa, y: start.y - p.x * sa + p.y * ca, h: (p.h || 0) + start.h };
-}
-
 function poseAt(ms) {
-  if (!sim) return { ...start, h: start.h };
+  if (!sim) return { ...start };
   const T = sim.ticks;
-  // ticks are uniformly spaced at tick_ms, so index directly
   const i = Math.max(0, Math.min(T.length - 1, Math.round(ms / ROBOT.sim.tick_ms)));
-  return toFieldFrame(T[i]);
+  return T[i];
 }
 
-// the four corners of the robot at a field pose
 function robotCorners(p) {
   const L = ROBOT.length_in, W = ROBOT.width_in, off = ROBOT.center_offset_in;
   const a = p.h * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
-  // local frame: +v forward, +u to the right
-  const local = [[-W / 2, L / 2 - off], [W / 2, L / 2 - off], [W / 2, -L / 2 - off], [-W / 2, -L / 2 - off]];
-  return local.map(([u, v]) => ({ x: p.x + u * ca + v * sa, y: p.y - u * sa + v * ca }));
+  const cx = p.x - sa * off, cy = p.y - ca * off;
+  return [[-W / 2, L / 2], [W / 2, L / 2], [W / 2, -L / 2], [-W / 2, -L / 2]]
+    .map(([u, v]) => ({ x: cx + u * ca + v * sa, y: cy - u * sa + v * ca }));
 }
 
 // ---------------------------------------------------------------------------
 //  Warnings
 // ---------------------------------------------------------------------------
-let bounds = { count: 0, firstMs: null };
-
-function checkBounds() {
-  bounds = { count: 0, firstMs: null };
+function buildWarnings() {
+  const box = $('warnings');
+  box.innerHTML = '';
   if (!sim) return;
-  let wasOut = false;
-  for (const t of sim.ticks) {
-    const p = toFieldFrame(t);
-    const out = robotCorners(p).some(c => c.x < 0 || c.x > FIELD.SIZE || c.y < 0 || c.y > FIELD.SIZE);
-    if (out && !wasOut) { bounds.count++; if (bounds.firstMs === null) bounds.firstMs = t.t; }
-    wasOut = out;
+
+  const add = (cls, html) => { const d = document.createElement('div'); d.className = 'warn ' + cls; d.innerHTML = html; box.appendChild(d); };
+
+  if (sim.abort) {
+    add('bad', `<b>Stopped at move #${sim.abort.move}</b><br>` +
+      `Oblique contact with the ${sim.abort.name} at ${(sim.abort.t / 1000).toFixed(2)} s. ` +
+      `What the robot does after a glancing hit is not predictable, so the path ends here ` +
+      `rather than guessing. The line shown is everything up to the impact.` +
+      `<br><span class="dim">If you have not placed the start pose yet, do that first — a routine ` +
+      `started in the wrong corner will drive into a wall almost immediately.</span>`);
   }
-  const el = $('warn-bounds');
-  if (bounds.count === 0) { el.textContent = 'stays inside the field'; el.className = 'warn ok'; }
-  else { el.textContent = `leaves the field ${bounds.count}x, first at ${(bounds.firstMs / 1000).toFixed(2)} s`; el.className = 'warn bad'; }
+
+  const solid = sim.contacts.filter(c => !c.unpredictable);
+  if (solid.length) {
+    const byName = {};
+    for (const c of solid) (byName[c.name] = byName[c.name] || []).push(c);
+    for (const name of Object.keys(byName)) {
+      const list = byName[name];
+      add('info', `<b>touches the ${name}</b> ${list.length}×, first at ` +
+        `${(list[0].t / 1000).toFixed(2)} s <span class="dim">(square contact — squares the robot up)</span>`);
+    }
+  }
+
+  if (!sim.abort && !solid.length) add('ok', 'no contact with anything on the field');
+
+  const drift = sim.moves.length ? sim.moves[sim.moves.length - 1].headingEnd : 0;
+  const asked = sim.moves.length ? sim.moves[sim.moves.length - 1].headingAsked + start.h : 0;
+  const d = wrap180(drift - asked);
+  if (Math.abs(d) > 3) add('bad', `<b>net heading drift ${d.toFixed(1)}°</b> at the end of the routine`);
 }
 
 // ---------------------------------------------------------------------------
-//  Move table: asked vs achieved, per drive / turn
+//  Move table
 // ---------------------------------------------------------------------------
 function buildMovesTable() {
   const tb = $('moves');
   tb.innerHTML = '';
   if (!sim) return;
   let worst = 0, timeouts = 0;
+
   for (const m of sim.moves) {
     const tr = document.createElement('tr');
     const bad = m.type === 'drive' ? Math.abs(m.gap) > 2 : Math.abs(m.headingGap) > 2;
     if (m.exit === 'hung') tr.className = 'hung'; else if (bad) tr.className = 'bad';
     const f1 = (v) => (v === undefined ? '' : v.toFixed(1));
-    tr.innerHTML = m.type === 'drive'
-      ? `<td>${m.i}</td><td>drive</td><td>${f1(m.asked)}</td><td>${f1(m.achieved)}</td><td>${f1(m.gap)}</td><td>${m.ms}</td><td>${m.exit}</td>`
-      : `<td>${m.i}</td><td>turn</td><td>${f1(m.headingAsked)}°</td><td>${f1(m.headingEnd)}°</td><td>${f1(m.headingGap)}°</td><td>${m.ms}</td><td>${m.exit}</td>`;
-    tr.onclick = () => { timeMs = sim.ticks.findIndex(t => t.move === sim.moves.indexOf(m)) * ROBOT.sim.tick_ms; playing = false; draw(); };
+    const hookOn = hooks.has(m.i);
+    const mark = m.contact ? (m.contact.unpredictable ? '✕' : '●') : '';
+    tr.innerHTML = (m.type === 'drive'
+      ? `<td>${m.i}</td><td>drive</td><td>${f1(m.asked)}</td><td>${f1(m.achieved)}</td><td>${f1(m.gap)}</td>`
+      : `<td>${m.i}</td><td>turn</td><td>${f1(m.headingAsked)}°</td><td>${f1(m.headingEnd)}°</td><td>${f1(m.headingGap)}°</td>`)
+      + `<td>${m.ms}</td><td>${m.exit}</td>`
+      + `<td class="ct ${m.contact ? (m.contact.unpredictable ? 'x' : 'o') : ''}">${mark}</td>`
+      + `<td><span class="hook ${hookOn ? 'on' : ''}" data-i="${m.i}" title="mark this move as an intended hook engagement, so long-goal contact is ignored">⌐</span></td>`;
+    tr.onclick = (e) => {
+      if (e.target.classList.contains('hook')) {
+        const i = +e.target.dataset.i;
+        hooks.has(i) ? hooks.delete(i) : hooks.add(i);
+        writeJSON(KEY.hooks(routine), [...hooks]);
+        runSim(false); draw();
+        return;
+      }
+      const idx = sim.moves.indexOf(m);
+      const k = sim.ticks.findIndex(t => t.move === idx);
+      if (k >= 0) { timeMs = k * ROBOT.sim.tick_ms; playing = false; $('btn-play').textContent = 'Play'; draw(); }
+    };
     tb.appendChild(tr);
     if (m.exit === 'timeout') timeouts++;
     if (m.type === 'drive') worst = Math.max(worst, Math.abs(m.gap));
   }
+
+  $('sum-time').innerHTML = `<b>${(sim.duration_ms / 1000).toFixed(2)} s</b> total`;
   $('sum-moves').textContent = `${sim.moves.length} moves · ${timeouts} exit on timeout · worst drive gap ${worst.toFixed(1)} in`;
-  $('sum-time').textContent  = `${(sim.duration_ms / 1000).toFixed(2)} s simulated`;
-  const end = toFieldFrame(sim.ticks[sim.ticks.length - 1]);
-  const ie  = toFieldFrame(sim.intent[sim.intent.length - 1]);
+  const end = sim.ticks[sim.ticks.length - 1], ie = sim.intent[sim.intent.length - 1];
   $('sum-end').textContent = `sim ends ${Math.hypot(end.x - ie.x, end.y - ie.y).toFixed(1)} in from the intended end point`;
 }
 
 // ---------------------------------------------------------------------------
-//  Pointer handling: pan, zoom, measuring, straight-edge, start pose
+//  Start-pose presets
+// ---------------------------------------------------------------------------
+function buildPresets() {
+  const wrap = $('presets');
+  wrap.innerHTML = '';
+  const list = readJSON(KEY.presets(routine), []);
+  if (!list.length) { wrap.innerHTML = '<div class="hint">no saved placements yet</div>'; return; }
+  list.forEach((p, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.innerHTML = `<span class="nm" title="${p.x.toFixed(1)}, ${p.y.toFixed(1)} @ ${p.h.toFixed(0)}°">${p.name}</span><span class="del">×</span>`;
+    chip.querySelector('.nm').onclick = () => {
+      start = { x: p.x, y: p.y, h: p.h };
+      writeJSON(KEY.start(routine), start);
+      syncStartInputs(); runSim(false); draw();
+    };
+    chip.querySelector('.del').onclick = () => {
+      list.splice(i, 1); writeJSON(KEY.presets(routine), list); buildPresets();
+    };
+    wrap.appendChild(chip);
+  });
+}
+
+$('btn-remember').onclick = () => {
+  const name = (prompt('Name this placement (e.g. "red left, 3 tiles from mat")', '') || '').trim();
+  if (!name) return;
+  const list = readJSON(KEY.presets(routine), []);
+  list.push({ name, x: start.x, y: start.y, h: start.h });
+  writeJSON(KEY.presets(routine), list);
+  buildPresets();
+};
+
+// ---------------------------------------------------------------------------
+//  Pointer handling
 // ---------------------------------------------------------------------------
 const measures = [];
 let pending = null, panning = null, drag = null;
@@ -163,8 +239,8 @@ const RULER_PX = 34;
 const evPos = (e) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
 
 function rulerPoints() {
-  const a = ruler.angle * Math.PI / 180, dx = Math.sin(a), dy = Math.cos(a);
-  return { a: { x: ruler.x, y: ruler.y }, b: { x: ruler.x + dx * ruler.length, y: ruler.y + dy * ruler.length } };
+  const a = ruler.angle * Math.PI / 180;
+  return { a: { x: ruler.x, y: ruler.y }, b: { x: ruler.x + Math.sin(a) * ruler.length, y: ruler.y + Math.cos(a) * ruler.length } };
 }
 function hitRuler(p) {
   if (!ruler.on) return null;
@@ -175,26 +251,20 @@ function hitRuler(p) {
   const t = ((p.x - A.x) * vx + (p.y - A.y) * vy) / L2;
   if (t < 0 || t > 1) return null;
   const d = Math.hypot(p.x - (A.x + t * vx), p.y - (A.y + t * vy));
-  const side = (p.x - A.x) * vy - (p.y - A.y) * vx;
-  return (d < RULER_PX && side > 0) ? 'ruler-body' : null;
+  return (d < RULER_PX && ((p.x - A.x) * vy - (p.y - A.y) * vx) > 0) ? 'ruler-body' : null;
 }
-
-// start-pose handles: the robot body at the start, and a rotation knob ahead of it
 function startHandlePos() {
-  const a = start.h * Math.PI / 180;
-  const d = ROBOT.length_in * 0.5 + 8;
+  const a = start.h * Math.PI / 180, d = ROBOT.length_in * 0.5 + 8;
   return { x: start.x + d * Math.sin(a), y: start.y + d * Math.cos(a) };
 }
 function hitStart(p) {
   const k = startHandlePos(), K = toScreen(k.x, k.y);
   if (Math.hypot(p.x - K.x, p.y - K.y) < 10) return 'rotate';
   const f = toField(p.x, p.y);
-  // inside the robot rectangle at the start pose?
   const a = -start.h * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
   const dx = f.x - start.x, dy = f.y - start.y;
-  const u = dx * ca + dy * sa, v = -dx * sa + dy * ca;   // rotate back into robot frame
-  if (Math.abs(u) <= ROBOT.width_in / 2 && Math.abs(v) <= ROBOT.length_in / 2) return 'move';
-  return null;
+  const u = dx * ca + dy * sa, v = -dx * sa + dy * ca;
+  return (Math.abs(u) <= ROBOT.width_in / 2 && Math.abs(v) <= ROBOT.length_in / 2) ? 'move' : null;
 }
 
 canvas.addEventListener('mousedown', (e) => {
@@ -217,13 +287,13 @@ canvas.addEventListener('mousemove', (e) => {
     const f = toField(p.x, p.y);
     if (drag.kind === 'start-move') {
       start.x = drag.x0 + (f.x - drag.grab.x); start.y = drag.y0 + (f.y - drag.grab.y);
-      if (e.altKey) snapStart();
-      onStartChanged();
+      if (e.altKey) { const half = FIELD.TILE / 2; start.x = Math.round(start.x / half) * half; start.y = Math.round(start.y / half) * half; }
+      queueSim();
     } else if (drag.kind === 'start-rotate') {
       let ang = Math.atan2(f.x - start.x, f.y - start.y) * 180 / Math.PI;
       if (e.shiftKey) ang = Math.round(ang / 15) * 15;
       start.h = ((ang % 360) + 360) % 360;
-      onStartChanged();
+      queueSim();
     } else if (drag.kind === 'ruler-body') {
       ruler.x = drag.x0 + (f.x - drag.grab.x); ruler.y = drag.y0 + (f.y - drag.grab.y);
     } else {
@@ -238,12 +308,22 @@ canvas.addEventListener('mousemove', (e) => {
   draw();
 });
 
+// Re-simulating on every mouse move would fight the frame rate on the longer
+// routines, so a drag coalesces into at most one run per animation frame.
+let simQueued = false;
+function queueSim() {
+  syncStartInputs();
+  if (simQueued) return;
+  simQueued = true;
+  requestAnimationFrame(() => { simQueued = false; runSim(false); draw(); });
+}
+
 window.addEventListener('mouseup', () => {
   if (pending) {
     if (Math.hypot(pending.to.x - pending.from.x, pending.to.y - pending.from.y) > 0.5) measures.push(pending);
     pending = null; $('measure-count').textContent = measures.length || 'none';
   }
-  if (drag && drag.kind.startsWith('start')) saveStart();
+  if (drag && drag.kind.startsWith('start')) { writeJSON(KEY.start(routine), start); runSim(false); }
   panning = null; drag = null; draw();
 });
 canvas.addEventListener('mouseleave', () => { mouse.inside = false; draw(); });
@@ -254,7 +334,9 @@ canvas.addEventListener('contextmenu', (e) => {
     const A = toScreen(measures[i].from.x, measures[i].from.y), B = toScreen(measures[i].to.x, measures[i].to.y);
     const vx = B.x - A.x, vy = B.y - A.y, L2 = vx * vx + vy * vy || 1;
     const t = Math.max(0, Math.min(1, ((p.x - A.x) * vx + (p.y - A.y) * vy) / L2));
-    if (Math.hypot(p.x - (A.x + t * vx), p.y - (A.y + t * vy)) < 8) { measures.splice(i, 1); $('measure-count').textContent = measures.length || 'none'; draw(); return; }
+    if (Math.hypot(p.x - (A.x + t * vx), p.y - (A.y + t * vy)) < 8) {
+      measures.splice(i, 1); $('measure-count').textContent = measures.length || 'none'; draw(); return;
+    }
   }
 });
 canvas.addEventListener('wheel', (e) => {
@@ -265,19 +347,16 @@ canvas.addEventListener('wheel', (e) => {
   draw();
 }, { passive: false });
 
-function snapStart() {
-  const half = FIELD.TILE / 2;
-  start.x = Math.round(start.x / half) * half;
-  start.y = Math.round(start.y / half) * half;
-}
-function onStartChanged() { syncStartInputs(); checkBounds(); buildMovesTable(); }
 function syncStartInputs() {
   $('in-x').value = start.x.toFixed(1); $('in-y').value = start.y.toFixed(1); $('in-h').value = start.h.toFixed(1);
 }
 for (const [id, key] of [['in-x', 'x'], ['in-y', 'y'], ['in-h', 'h']]) {
   $(id).addEventListener('change', (e) => {
     const v = parseFloat(e.target.value);
-    if (isFinite(v)) { start[key] = key === 'h' ? ((v % 360) + 360) % 360 : v; onStartChanged(); saveStart(); draw(); }
+    if (!isFinite(v)) return;
+    start[key] = key === 'h' ? ((v % 360) + 360) % 360 : v;
+    writeJSON(KEY.start(routine), start);
+    runSim(false); draw();
   });
 }
 
@@ -289,81 +368,98 @@ function drawPaths() {
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // intent: dashed, what the code says
+  const revealTicks = Math.max(1, Math.floor(sim.ticks.length * reveal));
+  const revealIntent = Math.max(1, Math.floor(sim.intent.length * reveal));
+
   if (showIntent) {
     ctx.save();
     ctx.strokeStyle = 'rgba(60,66,74,0.55)'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 5]);
     ctx.beginPath();
-    sim.intent.forEach((p, i) => { const f = toFieldFrame(p), s = toScreen(f.x, f.y); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); });
-    ctx.stroke();
-    ctx.setLineDash([]);
-    for (const p of sim.intent) { const f = toFieldFrame(p), s = toScreen(f.x, f.y); ctx.fillStyle = 'rgba(60,66,74,0.7)'; ctx.beginPath(); ctx.arc(s.x, s.y, 2.2, 0, Math.PI * 2); ctx.fill(); }
+    for (let i = 0; i < revealIntent; i++) { const s = toScreen(sim.intent[i].x, sim.intent[i].y); i ? ctx.lineTo(s.x, s.y) : ctx.moveTo(s.x, s.y); }
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(60,66,74,0.7)';
+    for (let i = 0; i < revealIntent; i++) { const s = toScreen(sim.intent[i].x, sim.intent[i].y); ctx.beginPath(); ctx.arc(s.x, s.y, 2.2, 0, Math.PI * 2); ctx.fill(); }
     ctx.restore();
   }
 
-  // simulated: solid; travelled part strong, remainder faint
   if (showSim) {
-    const iNow = Math.min(sim.ticks.length - 1, Math.round(timeMs / ROBOT.sim.tick_ms));
+    const iNow = Math.min(revealTicks - 1, Math.round(timeMs / ROBOT.sim.tick_ms));
     const seg = (from, to, style, width) => {
+      if (to <= from) return;
       ctx.strokeStyle = style; ctx.lineWidth = width; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.beginPath();
-      for (let i = from; i <= to; i++) { const f = toFieldFrame(sim.ticks[i]), s = toScreen(f.x, f.y); i === from ? ctx.moveTo(s.x, s.y) : ctx.lineTo(s.x, s.y); }
+      for (let i = from; i <= to; i++) { const s = toScreen(sim.ticks[i].x, sim.ticks[i].y); i === from ? ctx.moveTo(s.x, s.y) : ctx.lineTo(s.x, s.y); }
       ctx.stroke();
     };
     ctx.save();
-    seg(iNow, sim.ticks.length - 1, 'rgba(47,111,176,0.30)', 2);
+    seg(iNow, revealTicks - 1, 'rgba(47,111,176,0.30)', 2);
     seg(0, iNow, 'rgba(47,111,176,0.95)', 2.5);
     ctx.restore();
+
+    // the leading edge, while the path is still drawing itself
+    if (reveal < 1) {
+      const p = sim.ticks[revealTicks - 1], s = toScreen(p.x, p.y);
+      ctx.save();
+      ctx.fillStyle = '#2f6fb0'; ctx.beginPath(); ctx.arc(s.x, s.y, 4.5, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(47,111,176,0.35)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(s.x, s.y, 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
   }
 
-  // events: pneumatic and intake changes as small markers
+  // contact markers
+  ctx.save();
+  for (const c of sim.contacts) {
+    const i = Math.min(revealTicks - 1, Math.round(c.t / ROBOT.sim.tick_ms));
+    if (i * ROBOT.sim.tick_ms < c.t - 1) continue;
+    const p = sim.ticks[i], s = toScreen(p.x, p.y);
+    ctx.fillStyle = c.unpredictable ? '#c8273a' : '#e0892d';
+    ctx.beginPath(); ctx.arc(s.x, s.y, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+  }
+  ctx.restore();
+
   if (showEvents) {
     ctx.save();
     ctx.font = '9px "JetBrains Mono", ui-monospace, monospace'; ctx.textBaseline = 'middle';
     for (const ev of sim.events) {
+      if (ev.tick > revealTicks) continue;
       const a = ev.action;
       let label = null, color = null;
       if (a.type === 'pneumatic') { label = `${a.name} ${a.state ? 'on' : 'off'}`; color = a.state ? '#c8721a' : '#8a8f96'; }
       if (a.type === 'motor' && a.name === 'intake') { label = a.action === 'stop' ? 'intake stop' : 'intake'; color = '#2a9d5c'; }
       if (!label) continue;
-      const f = toFieldFrame({ x: ev.x, y: ev.y }), s = toScreen(f.x, f.y);
+      const s = toScreen(ev.x, ev.y);
       ctx.fillStyle = color; ctx.beginPath(); ctx.arc(s.x, s.y, 3, 0, Math.PI * 2); ctx.fill();
-      if (view.s > 5) { ctx.fillStyle = color; ctx.fillText(label, s.x + 6, s.y); }
+      if (view.s > 5) ctx.fillText(label, s.x + 6, s.y);
     }
     ctx.restore();
   }
 }
 
 function drawRobot(p, opts) {
-  const dpr = window.devicePixelRatio || 1;
   const c = robotCorners(p).map(q => toScreen(q.x, q.y));
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.save();
   ctx.globalAlpha = opts.alpha;
   ctx.beginPath(); c.forEach((q, i) => i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)); ctx.closePath();
   ctx.fillStyle = opts.fill; ctx.fill();
   ctx.strokeStyle = opts.stroke; ctx.lineWidth = opts.outline || 1.5; ctx.stroke();
-  // front edge: solid bar between corners 0 and 1; rear: short ticks
-  ctx.strokeStyle = opts.front; ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y); ctx.lineTo(c[1].x, c[1].y); ctx.stroke();
-  ctx.strokeStyle = opts.stroke; ctx.lineWidth = 1.5;
   const mid = (a, b, k) => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
   const cc = { x: (c[0].x + c[2].x) / 2, y: (c[0].y + c[2].y) / 2 };
-  const fm = mid(c[0], c[1], 0.5);
-  ctx.beginPath(); ctx.moveTo(cc.x, cc.y); ctx.lineTo(fm.x, fm.y); ctx.stroke();     // heading line
-  // rear edge: two short ticks (corners 3 -> 2), so front and back read differently
-  for (const k of [0.3, 0.7]) {
-    const r = mid(c[3], c[2], k), inward = mid(r, cc, 0.18);
-    ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(inward.x, inward.y); ctx.stroke();
+  ctx.strokeStyle = opts.front; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y); ctx.lineTo(c[1].x, c[1].y); ctx.stroke();   // front
+  ctx.strokeStyle = opts.stroke; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(cc.x, cc.y); ctx.lineTo(mid(c[0], c[1], 0.5).x, mid(c[0], c[1], 0.5).y); ctx.stroke();
+  for (const k of [0.3, 0.7]) {                                                            // rear ticks
+    const r = mid(c[3], c[2], k), inw = mid(r, cc, 0.18);
+    ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(inw.x, inw.y); ctx.stroke();
   }
   ctx.beginPath(); ctx.arc(cc.x, cc.y, 2.5, 0, Math.PI * 2); ctx.fillStyle = opts.stroke; ctx.fill();
   ctx.restore();
 }
 
 function drawStartHandle() {
-  const dpr = window.devicePixelRatio || 1;
   const k = startHandlePos(), K = toScreen(k.x, k.y), S = toScreen(start.x, start.y);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.save();
   ctx.strokeStyle = 'rgba(47,111,176,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
   ctx.beginPath(); ctx.moveTo(S.x, S.y); ctx.lineTo(K.x, K.y); ctx.stroke(); ctx.setLineDash([]);
@@ -378,12 +474,21 @@ function drawEdgeRulers() {
   let step = FIELD.TILE; for (const t of TICK_LADDER) if (t * view.s >= 55) step = t;
   ctx.save();
   ctx.fillStyle = css.getPropertyValue('--gutter').trim(); ctx.fillRect(0, 0, W, MARGIN); ctx.fillRect(0, 0, MARGIN, H);
-  ctx.font = '10px "JetBrains Mono", ui-monospace, monospace'; ctx.fillStyle = css.getPropertyValue('--muted').trim();
+  ctx.font = '10px "JetBrains Mono", ui-monospace, monospace';
+  ctx.fillStyle = css.getPropertyValue('--muted').trim();
   ctx.strokeStyle = css.getPropertyValue('--hair').trim(); ctx.lineWidth = 1;
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-  for (let x = 0; x <= FIELD.SIZE + 0.01; x += step) { const sx = toScreen(x, 0).x; if (sx < MARGIN - 2 || sx > W) continue; ctx.beginPath(); ctx.moveTo(sx, MARGIN - 5); ctx.lineTo(sx, MARGIN); ctx.stroke(); ctx.fillText(x.toFixed(0), sx, MARGIN - 6); }
+  for (let x = 0; x <= FIELD.SIZE + 0.01; x += step) {
+    const sx = toScreen(x, 0).x; if (sx < MARGIN - 2 || sx > W) continue;
+    ctx.beginPath(); ctx.moveTo(sx, MARGIN - 5); ctx.lineTo(sx, MARGIN); ctx.stroke();
+    ctx.fillText(x.toFixed(0), sx, MARGIN - 6);
+  }
   ctx.textBaseline = 'top';
-  for (let y = 0; y <= FIELD.SIZE + 0.01; y += step) { const sy = toScreen(0, y).y; if (sy < MARGIN || sy > H) continue; ctx.beginPath(); ctx.moveTo(MARGIN - 5, sy); ctx.lineTo(MARGIN, sy); ctx.stroke(); ctx.save(); ctx.translate(MARGIN - 7, sy); ctx.rotate(-Math.PI / 2); ctx.fillText(y.toFixed(0), 0, 0); ctx.restore(); }
+  for (let y = 0; y <= FIELD.SIZE + 0.01; y += step) {
+    const sy = toScreen(0, y).y; if (sy < MARGIN || sy > H) continue;
+    ctx.beginPath(); ctx.moveTo(MARGIN - 5, sy); ctx.lineTo(MARGIN, sy); ctx.stroke();
+    ctx.save(); ctx.translate(MARGIN - 7, sy); ctx.rotate(-Math.PI / 2); ctx.fillText(y.toFixed(0), 0, 0); ctx.restore();
+  }
   ctx.textAlign = 'left'; ctx.fillText('in', 5, 5);
   ctx.restore();
 }
@@ -394,7 +499,8 @@ function drawRuler() {
   const len = Math.hypot(B.x - A.x, B.y - A.y), ang = Math.atan2(B.y - A.y, B.x - A.x);
   ctx.save(); ctx.translate(A.x, A.y); ctx.rotate(ang);
   ctx.fillStyle = 'rgba(60,110,170,0.16)'; ctx.fillRect(0, 0, len, RULER_PX);
-  ctx.strokeStyle = 'rgba(40,90,150,0.65)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(len, 0); ctx.stroke();
+  ctx.strokeStyle = 'rgba(40,90,150,0.65)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(len, 0); ctx.stroke();
   ctx.strokeStyle = 'rgba(40,90,150,0.30)'; ctx.lineWidth = 1; ctx.strokeRect(0, 0, len, RULER_PX);
   ctx.strokeStyle = 'rgba(30,70,120,0.55)'; ctx.fillStyle = 'rgba(30,70,120,0.85)';
   ctx.font = '9px "JetBrains Mono", ui-monospace, monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
@@ -415,14 +521,16 @@ function drawOneMeasure(m) {
   const dx = m.to.x - m.from.x, dy = m.to.y - m.from.y, len = Math.hypot(dx, dy);
   const bearing = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;
   ctx.save();
-  ctx.strokeStyle = '#d97a17'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
+  ctx.strokeStyle = '#d97a17'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
   for (const p of [A, B]) { ctx.beginPath(); ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2); ctx.fillStyle = '#d97a17'; ctx.fill(); }
   const txt = `${len.toFixed(2)}"  ${(len / FIELD.TILE).toFixed(2)} tiles  @ ${bearing.toFixed(1)}°`;
   ctx.font = '11px "JetBrains Mono", ui-monospace, monospace';
   const w = ctx.measureText(txt).width + 12, mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
   ctx.fillStyle = 'rgba(255,255,255,0.94)'; ctx.strokeStyle = 'rgba(0,0,0,0.12)'; ctx.lineWidth = 1;
   ctx.fillRect(mx - w / 2, my - 26, w, 18); ctx.strokeRect(mx - w / 2, my - 26, w, 18);
-  ctx.fillStyle = '#8a4a08'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, mx, my - 17);
+  ctx.fillStyle = '#8a4a08'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(txt, mx, my - 17);
   ctx.restore();
 }
 
@@ -432,8 +540,10 @@ function drawCrosshair() {
   $('cursor-in').textContent = `${f.x.toFixed(1)}, ${f.y.toFixed(1)}`;
   $('cursor-tile').textContent = `${(f.x / FIELD.TILE).toFixed(2)}, ${(f.y / FIELD.TILE).toFixed(2)}`;
   ctx.save(); ctx.strokeStyle = 'rgba(40,110,190,0.28)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(MARGIN, mouse.y); ctx.lineTo(canvas.clientWidth, mouse.y); ctx.moveTo(mouse.x, MARGIN); ctx.lineTo(mouse.x, canvas.clientHeight); ctx.stroke();
-  ctx.restore();
+  ctx.beginPath();
+  ctx.moveTo(MARGIN, mouse.y); ctx.lineTo(canvas.clientWidth, mouse.y);
+  ctx.moveTo(mouse.x, MARGIN); ctx.lineTo(mouse.x, canvas.clientHeight);
+  ctx.stroke(); ctx.restore();
 }
 
 function draw() {
@@ -447,20 +557,20 @@ function draw() {
   drawField(ctx, view.s, null);
   ctx.restore();
 
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   drawPaths();
 
   if (sim) {
-    // ghost at the start pose (draggable), live robot at the current time
-    drawRobot({ ...start, h: start.h }, { alpha: 0.35, fill: 'rgba(47,111,176,0.25)', stroke: '#2f6fb0', front: '#2f6fb0' });
+    drawRobot({ ...start }, { alpha: 0.35, fill: 'rgba(47,111,176,0.25)', stroke: '#2f6fb0', front: '#2f6fb0' });
     drawStartHandle();
-    const p = poseAt(timeMs);
-    const out = robotCorners(p).some(c => c.x < 0 || c.x > FIELD.SIZE || c.y < 0 || c.y > FIELD.SIZE);
-    drawRobot(p, { alpha: 1, fill: 'rgba(255,255,255,0.82)', stroke: out ? '#d9283c' : '#1c2128', front: out ? '#d9283c' : '#2f6fb0', outline: out ? 3 : 1.5 });
+    const p = poseAt(Math.min(timeMs, (Math.max(1, Math.floor(sim.ticks.length * reveal)) - 1) * ROBOT.sim.tick_ms));
+    const touching = sim.contacts.some(c => Math.abs(c.t - timeMs) < 120);
+    drawRobot(p, { alpha: 1, fill: 'rgba(255,255,255,0.86)', stroke: touching ? '#d9283c' : '#1c2128',
+                   front: touching ? '#d9283c' : '#2f6fb0', outline: touching ? 3 : 1.5 });
     $('time-readout').textContent = `${(timeMs / 1000).toFixed(2)} s   x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  h ${(((p.h % 360) + 360) % 360).toFixed(1)}°`;
     $('timeline').value = timeMs;
   }
 
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   drawEdgeRulers(); drawRuler();
   for (const m of measures) drawOneMeasure(m);
   if (pending) drawOneMeasure(pending);
@@ -469,24 +579,33 @@ function draw() {
 }
 
 // ---------------------------------------------------------------------------
-//  Playback
+//  Frame loop: playback and the reveal animation
 // ---------------------------------------------------------------------------
 function frame(now) {
-  if (playing && sim) {
-    const dt = lastFrame ? now - lastFrame : 0;
-    timeMs += dt * parseFloat($('speed').value);
-    if (timeMs >= sim.duration_ms) { timeMs = sim.duration_ms; playing = false; $('btn-play').textContent = 'Play'; }
-    draw();
+  let dirty = false;
+  if (revealAnim) {
+    const k = Math.min(1, (now - revealAnim.t0) / revealAnim.dur);
+    reveal = 1 - Math.pow(1 - k, 3);                       // ease out
+    if (k >= 1) { reveal = 1; revealAnim = null; }
+    dirty = true;
   }
+  if (playing && sim) {
+    timeMs += (lastFrame ? now - lastFrame : 0) * parseFloat($('speed').value);
+    if (timeMs >= sim.duration_ms) { timeMs = sim.duration_ms; playing = false; $('btn-play').textContent = 'Play'; }
+    dirty = true;
+  }
+  if (dirty) draw();
   lastFrame = now;
   requestAnimationFrame(frame);
 }
+
 $('btn-play').onclick = () => {
   if (!sim) return;
   if (timeMs >= sim.duration_ms) timeMs = 0;
   playing = !playing; $('btn-play').textContent = playing ? 'Pause' : 'Play';
 };
 $('btn-restart').onclick = () => { timeMs = 0; playing = false; $('btn-play').textContent = 'Play'; draw(); };
+$('btn-replay').onclick = () => { runSim(true); draw(); };
 $('timeline').addEventListener('input', (e) => { timeMs = parseFloat(e.target.value); playing = false; $('btn-play').textContent = 'Play'; draw(); });
 
 // ---------------------------------------------------------------------------
@@ -497,27 +616,32 @@ for (const name of Object.keys(LOGS)) { const o = document.createElement('option
 sel.onchange = (e) => selectRoutine(e.target.value);
 
 $('btn-fit').onclick = fitView;
-$('btn-reset-start').onclick = () => { start = loadStart(routine); onStartChanged(); draw(); };
-$('btn-default-start').onclick = () => { start = { ...DEFAULT_START }; onStartChanged(); saveStart(); draw(); };
+$('btn-default-start').onclick = () => { start = { ...DEFAULT_START }; writeJSON(KEY.start(routine), start); syncStartInputs(); runSim(false); draw(); };
 $('btn-ruler').onclick = (e) => { ruler.on = !ruler.on; e.target.classList.toggle('active', ruler.on); if (!ruler.on) $('ruler-readout').textContent = 'off'; draw(); };
 $('btn-clear').onclick = () => { measures.length = 0; $('measure-count').textContent = 'none'; draw(); };
 $('btn-theme').onclick = (e) => {
   const t = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = t; setTheme(t); e.target.textContent = t === 'light' ? 'Dark' : 'Light'; draw();
+  document.documentElement.dataset.theme = t; setTheme(t);
+  e.target.textContent = t === 'light' ? 'Dark' : 'Light'; draw();
 };
 $('chk-intent').onchange = (e) => { showIntent = e.target.checked; draw(); };
 $('chk-sim').onchange    = (e) => { showSim = e.target.checked; draw(); };
 $('chk-events').onchange = (e) => { showEvents = e.target.checked; draw(); };
 
-// model sliders re-run the simulation
-for (const [id, key, fmt] of [['sl-load', 'load_factor', v => v.toFixed(2)], ['sl-tau', 'tau_s', v => v.toFixed(2) + ' s'], ['sl-dead', 'v_dead', v => v.toFixed(2) + ' V']]) {
+for (const [id, key, fmt] of [['sl-load', 'load_factor', v => v.toFixed(2)],
+                              ['sl-tau', 'tau_s', v => v.toFixed(2) + ' s'],
+                              ['sl-dead', 'v_dead', v => v.toFixed(2) + ' V']]) {
   const el = $(id), out = $(id + '-v');
   el.value = ROBOT.sim[key]; out.textContent = fmt(ROBOT.sim[key]);
-  el.addEventListener('input', (e) => { ROBOT.sim[key] = parseFloat(e.target.value); out.textContent = fmt(ROBOT.sim[key]); runSim(); draw(); });
+  el.addEventListener('input', (e) => {
+    ROBOT.sim[key] = parseFloat(e.target.value); out.textContent = fmt(ROBOT.sim[key]);
+    runSim(false); draw();
+  });
 }
 
 window.addEventListener('resize', resize);
 setTheme('light');
-if (routine) { selectRoutine(routine); sel.value = routine; } else { $('sum-moves').textContent = 'no logs found — run build.bat first'; }
+if (routine) { sel.value = routine; selectRoutine(routine); }
+else { setStatus('no logs found — run build.bat first', false); }
 resize();
 requestAnimationFrame(frame);

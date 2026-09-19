@@ -1,23 +1,24 @@
 // ============================================================================
 //  viewer/sim.js  --  replays the action log through the robot's own control
-//                     loop, 10 ms at a time
+//                     loop, 10 ms at a time, on a field it cannot drive through
 // ----------------------------------------------------------------------------
-//  Two things live here and it matters which is which:
+//  Three layers, and it matters which is which:
 //
-//    1. The CONTROLLER -- class PID and the two move loops. These are
-//       transcribed line for line from the template (PID.cpp, drive.cpp),
-//       including its quirks: no dt term, the 10 ms hard-coded into the
-//       settle timers, previous_error starting at zero. Nothing is "improved".
+//    1. CONTROLLER -- class PID and the two move loops, transcribed line for
+//       line from PID.cpp and drive.cpp, quirks included: no dt term, 10 ms
+//       baked into the settle timers, previous_error starting at zero.
+//       Nothing here is "improved".
 //
-//    2. The PLANT -- stepChassis(). This is the only invented part: how a
-//       voltage becomes wheel speed becomes motion. It has exactly three
-//       tunable numbers, all in robot.js, all physically measurable.
+//    2. PLANT -- stepChassis(). Voltage to wheel speed to motion. Exactly
+//       three tunable constants, all in robot.js, all measurable.
 //
-//  Everything is computed in the ROBOT FRAME: the robot starts at (0,0) with
-//  heading 0 and the gyro reads 0. The viewer places that frame on the field
-//  with a rigid transform, so dragging the start pose never re-runs this.
+//    3. WORLD -- collide.js. The robot stops at goals, loaders and walls, and
+//       its encoders stop with it.
 //
-//  Heading convention throughout: degrees, 0 = +Y, clockwise positive.
+//  Everything runs in the ROBOT FRAME: start at (0,0) heading 0 with the gyro
+//  reading 0. Obstacles, however, live on the FIELD, so the simulation needs
+//  the start pose. Re-running on a drag is cheap (a few thousand ticks) and is
+//  the price of the robot no longer being able to drive through a goal.
 // ============================================================================
 
 const wrap180 = (a) => { while (a >= 180) a -= 360; while (a < -180) a += 360; return a; };
@@ -32,13 +33,12 @@ class PID {
     this.kp = kp; this.ki = ki; this.kd = kd; this.starti = starti;
     this.settle_error = settle_error; this.settle_time = settle_time; this.timeout = timeout;
     this.accumulated_error = 0;
-    this.previous_error = 0;          // NOT initialised to `error` -- same as the template
+    this.previous_error = 0;          // NOT seeded with `error` -- same as the template
     this.output = 0;
     this.time_spent_settled = 0;
     this.time_spent_running = 0;
   }
-
-  compute(error) {                    // PID.cpp:22-42
+  compute(error) {                                            // PID.cpp:22-42
     if (Math.abs(error) < this.starti) this.accumulated_error += error;
     if ((error > 0 && this.previous_error < 0) || (error < 0 && this.previous_error > 0))
       this.accumulated_error = 0;
@@ -50,13 +50,11 @@ class PID {
     this.time_spent_running += 10;
     return this.output;
   }
-
-  is_settled() {                      // PID.cpp:45-53
+  is_settled() {                                              // PID.cpp:45-53
     if (this.time_spent_running > this.timeout && this.timeout !== 0) return true;
     if (this.time_spent_settled > this.settle_time) return true;
     return false;
   }
-
   exitReason() {
     if (this.time_spent_settled > this.settle_time) return 'settled';
     if (this.time_spent_running > this.timeout && this.timeout !== 0) return 'timeout';
@@ -65,61 +63,91 @@ class PID {
 }
 
 // ---------------------------------------------------------------------------
-//  The plant.
+//  The plant, plus the world.
 //
-//  state: { x, y, h, sL, sR, encL, encR, t }
-//    sL/sR   current wheel surface speeds, in/s
-//    encL/R  distance each side has rolled, in  (what the encoders report)
+//  state: { x, y, h, sL, sR, encL, encR, t }  -- x,y,h are FIELD coordinates
+//  sL/sR   wheel surface speeds, in/s
+//  encL/R  what each side's encoder has counted, inches
 //
 //  Differential drive: forward speed is the mean of the two sides, turn rate
-//  is their difference over the track width. Left faster than right turns the
-//  robot clockwise, which in this convention INCREASES heading -- matching
-//  drive_with_voltage(drive + heading, drive - heading) in the template.
+//  their difference over the track width. Left faster turns clockwise, which
+//  in this convention increases heading -- matching the template's
+//  drive_with_voltage(drive + heading, drive - heading).
 // ---------------------------------------------------------------------------
-function stepChassis(st, vL, vR, R) {
+function stepChassis(st, vL, vR, R, world) {
   const P = R.sim, dt = P.tick_ms / 1000;
   const vmax = P.vmax_in_s * P.load_factor;
 
-  // dead band: below v_dead the motors cannot overcome static friction
-  const tL = Math.abs(vL) < P.v_dead ? 0 : (vL / 12) * vmax;
+  const tL = Math.abs(vL) < P.v_dead ? 0 : (vL / 12) * vmax;   // dead band
   const tR = Math.abs(vR) < P.v_dead ? 0 : (vR / 12) * vmax;
 
-  // first-order lag toward the target speed
-  const k = Math.min(1, dt / P.tau_s);
+  const k = Math.min(1, dt / P.tau_s);                          // first-order lag
   st.sL += (tL - st.sL) * k;
   st.sR += (tR - st.sR) * k;
 
   const v = (st.sL + st.sR) / 2;
-  const w = (st.sL - st.sR) / R.track_in;          // rad/s, clockwise +
+  const w = (st.sL - st.sR) / R.track_in;                       // rad/s, clockwise +
 
-  // integrate with the midpoint heading for second-order accuracy
-  const hMid = (st.h * Math.PI / 180) + w * dt / 2;
+  const x0 = st.x, y0 = st.y, h0 = st.h;
+  const hMid = (st.h * Math.PI / 180) + w * dt / 2;             // midpoint heading
   st.x += v * dt * Math.sin(hMid);
   st.y += v * dt * Math.cos(hMid);
   st.h += w * dt * 180 / Math.PI;
 
-  st.encL += st.sL * dt;
-  st.encR += st.sR * dt;
+  // --- the world pushes back ------------------------------------------------
+  let contact = null;
+  if (world) {
+    const vel = { x: (st.x - x0) / dt, y: (st.y - y0) / dt };
+    contact = resolveContacts(st, R, world.obstacles, vel, world.skip);
+    if (contact && contact.real && contact.square) squareUp(st, contact, v, dt);
+  }
+
+  // --- encoders follow what the robot ACTUALLY did ---------------------------
+  // A stalled VEX drive barely rotates, so a blocked robot's encoders barely
+  // count. That is what makes the distance PID sit at full voltage seeing no
+  // progress until its timeout expires.
+  const dx = st.x - x0, dy = st.y - y0;
+  const dh = (st.h - h0) * Math.PI / 180;
+  const advance = dx * Math.sin(hMid) + dy * Math.cos(hMid);
+  st.encL += advance + dh * R.track_in / 2;
+  st.encR += advance - dh * R.track_in / 2;
+
+  // keep the speed state consistent with the motion that actually happened
+  if (contact) {
+    const av = advance / dt, aw = dh / dt;
+    st.sL = av + aw * R.track_in / 2;
+    st.sR = av - aw * R.track_in / 2;
+  }
+
   st.t += P.tick_ms;
+  return contact;
 }
 
-function brake(st) { st.sL = 0; st.sR = 0; }      // DriveL.stop(hold) / DriveR.stop(hold)
+function brake(st) { st.sL = 0; st.sR = 0; }        // DriveL.stop(hold) / DriveR.stop(hold)
 
-// Safety net: a move whose PID can never settle AND has timeout 0 would loop
-// forever -- on the real robot too. Cap it and report it.
-const HANG_LIMIT_MS = 30000;
+const HANG_LIMIT_MS = 30000;                        // a timeout of 0 would loop forever
+
+// Collects contacts during one move, keeping the most severe.
+function noteContact(acc, c, t) {
+  if (!c || !c.real) return acc;
+  if (!acc || (!acc.unpredictable && (c.graze || !c.square))) {
+    return { name: c.name, t, speed: c.speed, square: c.square,
+             unpredictable: c.graze || !c.square };
+  }
+  return acc;
+}
 
 // ---------------------------------------------------------------------------
 //  Move loops -- transcriptions of drive.cpp
 // ---------------------------------------------------------------------------
-function runDrive(st, a, R, ticks, moveIdx) {           // drive.cpp:191-225
+function runDrive(st, a, R, ticks, moveIdx, world) {            // drive.cpp:191-225
   const drivePID   = new PID(a.distance_in, a.drive_kp, a.drive_ki, a.drive_kd,
                              a.drive_starti, a.settle_error, a.settle_time, a.timeout);
   const headingPID = new PID(wrap180(a.heading_deg - st.h), a.heading_kp, a.heading_ki,
                              a.heading_kd, a.heading_starti);
   const startAvg = (st.encL + st.encR) / 2;
   const t0 = st.t;
-  let hung = false;
+  let hung = false, contact = null;
 
   while (!drivePID.is_settled()) {
     const avg = (st.encL + st.encR) / 2;
@@ -127,7 +155,7 @@ function runDrive(st, a, R, ticks, moveIdx) {           // drive.cpp:191-225
     const headingErr = wrap180(a.heading_deg - st.h);
     const dOut = clamp(drivePID.compute(driveErr),     -a.drive_max_v,   a.drive_max_v);
     const hOut = clamp(headingPID.compute(headingErr), -a.heading_max_v, a.heading_max_v);
-    stepChassis(st, dOut + hOut, dOut - hOut, R);
+    contact = noteContact(contact, stepChassis(st, dOut + hOut, dOut - hOut, R, world), st.t);
     ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx });
     if (st.t - t0 >= HANG_LIMIT_MS) { hung = true; break; }
   }
@@ -136,25 +164,22 @@ function runDrive(st, a, R, ticks, moveIdx) {           // drive.cpp:191-225
   const achieved = (st.encL + st.encR) / 2 - startAvg;
   return {
     type: 'drive', i: a.i, ms: st.t - t0,
-    asked: a.distance_in, achieved,
-    gap: a.distance_in - achieved,
-    headingAsked: a.heading_deg, headingEnd: st.h,
-    headingGap: wrap180(a.heading_deg - st.h),
-    exit: hung ? 'hung' : drivePID.exitReason(),
-    timeout: a.timeout,
+    asked: a.distance_in, achieved, gap: a.distance_in - achieved,
+    headingAsked: a.heading_deg, headingEnd: st.h, headingGap: wrap180(a.heading_deg - st.h),
+    exit: hung ? 'hung' : drivePID.exitReason(), timeout: a.timeout, contact,
   };
 }
 
-function runTurn(st, a, R, ticks, moveIdx) {            // drive.cpp:140-157
+function runTurn(st, a, R, ticks, moveIdx, world) {             // drive.cpp:140-157
   const pid = new PID(wrap180(a.heading_deg - st.h), a.turn_kp, a.turn_ki, a.turn_kd,
                       a.turn_starti, a.settle_error, a.settle_time, a.timeout);
   const t0 = st.t;
-  let hung = false;
+  let hung = false, contact = null;
 
   while (!pid.is_settled()) {
     const err = wrap180(a.heading_deg - st.h);
     const out = clamp(pid.compute(err), -a.turn_max_v, a.turn_max_v);
-    stepChassis(st, out, -out, R);
+    contact = noteContact(contact, stepChassis(st, out, -out, R, world), st.t);
     ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx });
     if (st.t - t0 >= HANG_LIMIT_MS) { hung = true; break; }
   }
@@ -162,10 +187,8 @@ function runTurn(st, a, R, ticks, moveIdx) {            // drive.cpp:140-157
 
   return {
     type: 'turn', i: a.i, ms: st.t - t0,
-    headingAsked: a.heading_deg, headingEnd: st.h,
-    headingGap: wrap180(a.heading_deg - st.h),
-    exit: hung ? 'hung' : pid.exitReason(),
-    timeout: a.timeout,
+    headingAsked: a.heading_deg, headingEnd: st.h, headingGap: wrap180(a.heading_deg - st.h),
+    exit: hung ? 'hung' : pid.exitReason(), timeout: a.timeout, contact,
   };
 }
 
@@ -178,17 +201,17 @@ function runWait(st, ms, ticks, moveIdx) {
 }
 
 // ---------------------------------------------------------------------------
-//  The naive reading of the code, for comparison: "turn to h, go d". No
-//  dynamics at all. This is what the programmer MEANT; the simulation above
+//  The naive reading of the code, for comparison: "turn to h, then go d". No
+//  dynamics, no obstacles. This is what the programmer MEANT; the simulation
 //  is what the robot does. The gap between the two lines is the point.
 // ---------------------------------------------------------------------------
-function intentPath(log) {
-  const pts = [{ x: 0, y: 0, h: 0 }];
-  let x = 0, y = 0, h = 0;
+function intentPath(log, start) {
+  const pts = [{ x: start.x, y: start.y, h: start.h }];
+  let x = start.x, y = start.y, h = start.h;
   for (const a of log.actions) {
-    if (a.type === 'turn') { h = a.heading_deg; pts.push({ x, y, h }); }
+    if (a.type === 'turn') { h = a.heading_deg + start.h; pts.push({ x, y, h }); }
     if (a.type === 'drive') {
-      h = a.heading_deg;
+      h = a.heading_deg + start.h;
       const r = h * Math.PI / 180;
       x += a.distance_in * Math.sin(r);
       y += a.distance_in * Math.cos(r);
@@ -199,30 +222,56 @@ function intentPath(log) {
 }
 
 // ---------------------------------------------------------------------------
-//  simulate(log, ROBOT) -> { ticks, moves, events, intent, duration_ms }
-//    ticks   one pose per 10 ms, robot frame
-//    moves   one summary per drive/turn: asked vs achieved, exit reason
-//    events  zero-duration actions (pneumatics, motors) with the tick they
-//            occurred at, for markers on the path
+//  simulate(log, ROBOT, start, opts)
+//
+//    start      { x, y, h } where the robot is placed on the field
+//    opts.hooks Set of action indices whose long-goal contact is INTENDED
+//               (the descore hook entering the goal's top slot), so those
+//               moves ignore long-goal collision
+//
+//  Returns { ticks, moves, events, intent, duration_ms, contacts, abort }
+//  Poses in `ticks` are already field coordinates.
 // ---------------------------------------------------------------------------
-function simulate(log, R) {
-  const st = { x: 0, y: 0, h: 0, sL: 0, sR: 0, encL: 0, encR: 0, t: 0 };
-  const ticks = [{ t: 0, x: 0, y: 0, h: 0, move: -1 }];
-  const moves = [], events = [];
+function simulate(log, R, start, opts) {
+  opts = opts || {};
+  const hooks = opts.hooks || new Set();
+  const obstacles = buildObstacles();
+
+  const st = { x: start.x, y: start.y, h: start.h, sL: 0, sR: 0, encL: 0, encR: 0, t: 0 };
+  const ticks = [{ t: 0, x: st.x, y: st.y, h: st.h, move: -1 }];
+  const moves = [], events = [], contacts = [];
+  let abort = null;
 
   for (const a of log.actions) {
     const idx = moves.length;
+    const world = {
+      obstacles,
+      skip: hooks.has(a.i) ? new Set(['longgoal']) : null,
+    };
+
+    let m = null;
     switch (a.type) {
-      case 'drive': moves.push(runDrive(st, a, R, ticks, idx)); break;
-      case 'turn':  moves.push(runTurn (st, a, R, ticks, idx)); break;
+      case 'drive': m = runDrive(st, a, R, ticks, idx, world); moves.push(m); break;
+      case 'turn':  m = runTurn (st, a, R, ticks, idx, world); moves.push(m); break;
       case 'wait':  runWait(st, a.ms, ticks, idx - 1); break;
       case 'motor':
       case 'pneumatic':
         events.push({ tick: ticks.length - 1, x: st.x, y: st.y, action: a });
         break;
-      default: break;          // config / exit records change nothing here
+      default: break;                       // config / exit records move nothing
+    }
+
+    if (m && m.contact) {
+      contacts.push({ ...m.contact, move: a.i, type: m.type });
+      if (m.contact.unpredictable) {
+        // An oblique or corner impact makes everything after it a guess.
+        // Better to stop and say so than to draw a confident wrong path.
+        abort = { move: a.i, name: m.contact.name, t: m.contact.t };
+        break;
+      }
     }
   }
 
-  return { ticks, moves, events, intent: intentPath(log), duration_ms: st.t };
+  return { ticks, moves, events, contacts, abort,
+           intent: intentPath(log, start), duration_ms: st.t };
 }
