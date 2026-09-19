@@ -68,6 +68,13 @@ function storageWorks() {
 const readJSON = (k, fallback) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fallback : v; } catch (e) { return fallback; } };
 const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
+// The drivetrain constants are a calibration, not a preference: once they are
+// measured against a real run they should stay put. Saved globally rather than
+// per routine, because they describe the robot, not the routine.
+const MODEL_KEY = 'vexsim.model';
+const MODEL_DEFAULTS = { load_factor: ROBOT.sim.load_factor, tau_s: ROBOT.sim.tau_s, v_dead: ROBOT.sim.v_dead };
+Object.assign(ROBOT.sim, readJSON(MODEL_KEY, {}));
+
 // ---------------------------------------------------------------------------
 //  Running the simulation
 // ---------------------------------------------------------------------------
@@ -595,14 +602,21 @@ function draw() {
     // The capture zone, kept deliberately faint: it shows where the robot is
     // TRYING to collect. Claiming more than that would be a guess.
     const now = sim.ticks[iNow];
-    if (now && now.ik === 1) {
-      const w = intakeWedge(now, ROBOT).map(q => toScreen(q.x, q.y));
+    const poly = (pts, fill, stroke) => {
       ctx.save();
-      ctx.beginPath(); w.forEach((q, i) => i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)); ctx.closePath();
-      ctx.fillStyle = 'rgba(42,157,92,0.12)'; ctx.fill();
-      ctx.strokeStyle = 'rgba(42,157,92,0.34)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); pts.forEach((q, i) => i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)); ctx.closePath();
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke();
       ctx.restore();
-    }
+    };
+    // The plate, while matchload is out: a low tongue that reaches under a
+    // loader tube. Drawn under the wedge so the two read as one mechanism.
+    if (now && now.pl)
+      poly(plateZone(now, ROBOT).map(q => toScreen(q.x, q.y)),
+           'rgba(120,132,148,0.22)', 'rgba(90,102,118,0.45)');
+    if (now && now.ik === 1)
+      poly(intakeWedge(now, ROBOT).map(q => toScreen(q.x, q.y)),
+           'rgba(42,157,92,0.12)', 'rgba(42,157,92,0.34)');
     $('carried').textContent = sim.carried[iNow] + ' / ' + sim.capacity;
 
     drawRobot({ ...start }, { alpha: 0.35, fill: 'rgba(47,111,176,0.25)', stroke: '#2f6fb0', front: '#2f6fb0' });
@@ -672,18 +686,29 @@ $('chk-intent').onchange = (e) => { showIntent = e.target.checked; draw(); };
 $('chk-sim').onchange    = (e) => { showSim = e.target.checked; draw(); };
 $('chk-events').onchange = (e) => { showEvents = e.target.checked; draw(); };
 
-for (const [id, key, fmt] of [['sl-load', 'load_factor', v => v.toFixed(2)],
-                              ['sl-tau', 'tau_s', v => v.toFixed(2) + ' s'],
-                              ['sl-dead', 'v_dead', v => v.toFixed(2) + ' V']]) {
+const MODEL_SLIDERS = [['sl-load', 'load_factor', v => v.toFixed(2)],
+                       ['sl-tau', 'tau_s', v => v.toFixed(2) + ' s'],
+                       ['sl-dead', 'v_dead', v => v.toFixed(2) + ' V']];
+function syncModelSliders() {
+  for (const [id, key, fmt] of MODEL_SLIDERS) { $(id).value = ROBOT.sim[key]; $(id + '-v').textContent = fmt(ROBOT.sim[key]); }
+}
+for (const [id, key, fmt] of MODEL_SLIDERS) {
   const el = $(id), out = $(id + '-v');
   el.value = ROBOT.sim[key]; out.textContent = fmt(ROBOT.sim[key]);
   el.addEventListener('input', (e) => {
     ROBOT.sim[key] = parseFloat(e.target.value); out.textContent = fmt(ROBOT.sim[key]);
+    writeJSON(MODEL_KEY, { load_factor: ROBOT.sim.load_factor, tau_s: ROBOT.sim.tau_s, v_dead: ROBOT.sim.v_dead });
     runSim(false); draw();
   });
 }
 
 document.getElementById('storage').textContent = storageWorks() ? 'kept across F5' : 'blocked by browser';
+
+$('btn-reset-model').onclick = () => {
+  Object.assign(ROBOT.sim, MODEL_DEFAULTS);
+  writeJSON(MODEL_KEY, MODEL_DEFAULTS);
+  syncModelSliders(); runSim(false); draw();
+};
 
 window.addEventListener('resize', resize);
 setTheme('light');

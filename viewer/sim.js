@@ -168,7 +168,7 @@ function runDrive(st, a, R, ticks, moveIdx, world) {            // drive.cpp:191
     const dOut = clamp(drivePID.compute(driveErr),     -a.drive_max_v,   a.drive_max_v);
     const hOut = clamp(headingPID.compute(headingErr), -a.heading_max_v, a.heading_max_v);
     contact = noteContact(contact, stepChassis(st, dOut + hOut, dOut - hOut, R, world), st.t);
-    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik });
+    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik, pl: st.plate });
     if (st.t - t0 >= HANG_LIMIT_MS) { hung = true; break; }
   }
   brake(st);
@@ -194,7 +194,7 @@ function runTurn(st, a, R, ticks, moveIdx, world) {             // drive.cpp:140
     const err = wrap180(target - st.h);
     const out = clamp(pid.compute(err), -a.turn_max_v, a.turn_max_v);
     contact = noteContact(contact, stepChassis(st, out, -out, R, world), st.t);
-    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik });
+    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik, pl: st.plate });
     if (st.t - t0 >= HANG_LIMIT_MS) { hung = true; break; }
   }
   brake(st);
@@ -211,7 +211,7 @@ function runWait(st, ms, ticks, moveIdx) {
   const n = Math.round(ms / ROBOT.sim.tick_ms);
   for (let i = 0; i < n; i++) {
     st.t += ROBOT.sim.tick_ms;
-    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik });
+    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik, pl: st.plate });
   }
 }
 
@@ -254,8 +254,8 @@ function simulate(log, R, start, opts) {
 
   const st = { x: start.x, y: start.y, h: start.h, hOff: start.h,
                sL: 0, sR: 0, encL: 0, encR: 0, t: 0,
-               ik: 0, intakeOn: false, shooterOn: false };
-  const ticks = [{ t: 0, x: st.x, y: st.y, h: st.h, move: -1, ik: 0 }];
+               ik: 0, intakeOn: false, shooterOn: false, plate: false };
+  const ticks = [{ t: 0, x: st.x, y: st.y, h: st.h, move: -1, ik: 0, pl: false }];
   const moves = [], events = [], contacts = [];
   let abort = null;
 
@@ -282,6 +282,10 @@ function simulate(log, R, start, opts) {
         events.push({ tick: ticks.length - 1, x: st.x, y: st.y, action: a });
         break;
       case 'pneumatic':
+        // matchload is the intake plate: deployed, it slides under a loader
+        // tube so the intake can draw the stack down. Nothing is inferred here
+        // -- the routine says when it goes out and comes back in.
+        if (a.name === 'matchload') st.plate = !!a.state;
         events.push({ tick: ticks.length - 1, x: st.x, y: st.y, action: a });
         break;
       default: break;                       // config / exit records move nothing
@@ -345,29 +349,87 @@ function pointInPoly(pt, poly) {
   return inside;
 }
 
+// The deployed plate: a low tongue reaching past the robot's front face. It is
+// what has to overlap a loader tube before the stack can be drawn down.
+function plateZone(p, R) {
+  const w = R.intake.width_in / 2;
+  const y0 = R.length_in / 2 - R.center_offset_in;
+  const y1 = y0 + R.plate.reach_in;
+  const a = p.h * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  return [[-w, y0], [w, y0], [w, y1], [-w, y1]]
+    .map(([u, v]) => ({ x: p.x + u * ca + v * sa, y: p.y - u * sa + v * ca }));
+}
+
+// Loaders, bottom block first -- a tube empties from the bottom.
+function loaderStacks() {
+  const out = [];
+  for (const lx of FIELD.LOADER.x) for (const ly of FIELD.LOADER.y)
+    out.push({ x: lx, y: ly, r: FIELD.LOADER.diameter / 2,
+               ids: BLOCKS.filter(b => b.loader && b.x === lx && b.y === ly)
+                          .sort((a, b) => a.stack - b.stack).map(b => b.id) });
+  return out;
+}
+
+function polyHitsCircle(poly, cx, cy, r) {
+  if (pointInPoly({ x: cx, y: cy }, poly)) return true;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    const vx = b.x - a.x, vy = b.y - a.y, L2 = vx * vx + vy * vy || 1;
+    const t = Math.max(0, Math.min(1, ((cx - a.x) * vx + (cy - a.y) * vy) / L2));
+    if (Math.hypot(cx - (a.x + t * vx), cy - (a.y + t * vy)) <= r) return true;
+  }
+  return false;
+}
+
 function computeIntake(ticks, R) {
-  const cap = R.intake.capacity, rate = R.intake.release_ms;
-  const pickups = [];            // { id, tick, t }
+  const cap = R.intake.capacity, rate = R.intake.release_ms, lrate = R.plate.loader_ms;
+  const pickups = [];            // { id, tick, t, from: 'floor' | 'loader' }
   const releases = [];           // { tick, t }
   const carried = new Array(ticks.length).fill(0);
   const taken = new Set();
-  let held = 0, ejectTimer = 0;
+  const stacks = loaderStacks();
+  let held = 0, ejectTimer = 0, loadTimer = 0, loading = null;
 
   for (let i = 0; i < ticks.length; i++) {
     const p = ticks[i];
+
     if (p.ik === 1 && held < cap) {
+      // --- loose blocks swept off the floor --------------------------------
       const wedge = intakeWedge(p, R);
       for (const b of BLOCKS) {
-        if (taken.has(b.id) || b.loader) continue;     // loader tubes need the plate
+        if (taken.has(b.id) || b.loader) continue;
         if (pointInPoly(b, wedge)) {
-          taken.add(b.id); held++; pickups.push({ id: b.id, tick: i, t: p.t });
+          taken.add(b.id); held++; pickups.push({ id: b.id, tick: i, t: p.t, from: 'floor' });
           if (held >= cap) break;
         }
       }
-    } else if (p.ik === 2 && held > 0) {
+      // --- a loader stack drawn down, one block at a time ------------------
+      // Needs the plate out: without it there is nothing under the tube for
+      // the blocks to come down onto.
+      if (p.pl && held < cap) {
+        const zone = plateZone(p, R);
+        const at = stacks.find(s => s.ids.some(id => !taken.has(id)) &&
+                                    polyHitsCircle(zone, s.x, s.y, s.r));
+        if (at) {
+          if (loading !== at) { loading = at; loadTimer = 0; }
+          loadTimer += R.sim.tick_ms;
+          if (loadTimer >= lrate) {
+            loadTimer = 0;
+            const id = at.ids.find(x => !taken.has(x));      // lowest first
+            if (id !== undefined) {
+              taken.add(id); held++; pickups.push({ id, tick: i, t: p.t, from: 'loader' });
+            }
+          }
+        } else { loading = null; loadTimer = 0; }
+      } else { loading = null; loadTimer = 0; }
+    } else {
+      loading = null; loadTimer = 0;
+    }
+
+    if (p.ik === 2 && held > 0) {
       ejectTimer += R.sim.tick_ms;
       if (ejectTimer >= rate) { ejectTimer = 0; held--; releases.push({ tick: i, t: p.t }); }
-    } else {
+    } else if (p.ik !== 1) {
       ejectTimer = 0;
     }
     carried[i] = held;

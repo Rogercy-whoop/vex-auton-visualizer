@@ -104,6 +104,8 @@ const THEMES = {
     glass: 'rgba(226,232,240,0.46)', glassEdge: 'rgba(58,68,80,0.55)',
     glassSide: 'rgba(168,178,190,0.80)', glassHi: 'rgba(255,255,255,0.75)',
     slot: 'rgba(78,88,101,0.38)',
+    tubeSide: 'rgba(150,162,176,0.94)', tubeTop: 'rgba(226,232,240,0.55)',
+    bolt: 'rgba(40,46,54,0.55)',
     strut: '#e0892d', strutSide: '#a8621b',
     red: '#d9283c', redSide: '#8e1a27', blue: '#2492e6', blueSide: '#155f9a',
     shadow: 'rgba(20,24,30,1)',
@@ -116,6 +118,8 @@ const THEMES = {
     glass: 'rgba(208,218,230,0.40)', glassEdge: 'rgba(16,20,26,0.62)',
     glassSide: 'rgba(128,140,154,0.78)', glassHi: 'rgba(255,255,255,0.60)',
     slot: 'rgba(18,22,28,0.50)',
+    tubeSide: 'rgba(112,124,138,0.94)', tubeTop: 'rgba(206,216,228,0.48)',
+    bolt: 'rgba(10,13,17,0.6)',
     strut: '#d9822b', strutSide: '#96581a',
     red: '#e0243c', redSide: '#8c1625', blue: '#2196f3', blueSide: '#125b95',
     shadow: 'rgba(0,0,0,1)',
@@ -265,17 +269,67 @@ function drawWall(ctx) {
   ctx.restore();
 }
 
+// ---------------------------------------------------------------------------
+//  Park zone: one continuous bracket, open toward the wall, standing 1 in off
+//  the floor. Drawn from the spec sheet -- 16.86 x 18.87 in overall, 2.00 in
+//  bar, rounded on the two field-side corners, with the bolt heads that hold
+//  it down. Traced as a single outline rather than three overlapping bars, so
+//  the inside corners meet cleanly.
+// ---------------------------------------------------------------------------
+function parkBracket(isLeft) {
+  const pk = FIELD.PARK, b = pk.bar, r = 2.6;
+  const D = pk.depth, H = pk.height;
+  const x0 = isLeft ? 0 : FIELD.SIZE - D, y0 = FIELD.CENTER - H / 2;
+  // local u runs from the wall toward the field; mirror it for the right side
+  const U = (u) => isLeft ? x0 + u : x0 + D - u;
+
+  const arc = (cu, cv, a0, a1) => {
+    const out = [];
+    for (let k = 0; k <= 6; k++) {
+      const a = a0 + (a1 - a0) * k / 6;
+      out.push({ x: U(cu + r * Math.cos(a) * (isLeft ? 1 : 1)), y: y0 + cv + r * Math.sin(a) });
+    }
+    return out;
+  };
+
+  const pts = [{ x: U(0), y: y0 }];
+  pts.push({ x: U(D - r), y: y0 });
+  pts.push(...arc(D - r, r, -Math.PI / 2, 0));
+  pts.push({ x: U(D), y: y0 + H - r });
+  pts.push(...arc(D - r, H - r, 0, Math.PI / 2));
+  pts.push({ x: U(0), y: y0 + H });
+  pts.push({ x: U(0), y: y0 + H - b });
+  pts.push({ x: U(D - b), y: y0 + H - b });
+  pts.push({ x: U(D - b), y: y0 + b });
+  pts.push({ x: U(0), y: y0 + b });
+  return { pts, x0, y0, D, H, b, U };
+}
+
 function drawParkZone(ctx, side) {
   const pk = FIELD.PARK, isLeft = side === 'left';
-  const x0 = isLeft ? 0 : FIELD.SIZE - pk.depth, y0 = FIELD.CENTER - pk.height / 2, b = pk.bar;
   const col = isLeft ? P.red : P.blue, sideCol = isLeft ? P.redSide : P.blueSide;
-  const bars = [
-    rectPts(x0, y0 + pk.height - b, pk.depth, b),
-    rectPts(x0, y0, pk.depth, b),
-    isLeft ? rectPts(x0 + pk.depth - b, y0, b, pk.height) : rectPts(x0, y0, b, pk.height),
-  ];
-  for (const bar of bars) withShadow(ctx, 3, c => pathOf(c, bar));
-  for (const bar of bars) drawPrism(ctx, bar, 0, pk.thick, sideCol, col, null);
+  const { pts, y0, D, H, b, U } = parkBracket(isLeft);
+
+  withShadow(ctx, 3, c => pathOf(c, pts));
+  const top = drawPrism(ctx, pts, 0, pk.thick, sideCol, col, 'rgba(0,0,0,0.22)');
+
+  const { dx, dy } = shiftOf(pts, pk.thick);
+  ctx.save();
+  pathOf(ctx, top); ctx.clip();
+
+  // a lit edge along the inside of each bar
+  ctx.fillStyle = 'rgba(255,255,255,0.20)';
+  ctx.fillRect(U(0) + dx - (isLeft ? 0 : D), y0 + b - 0.3 + dy, D, 0.3);
+  ctx.fillRect(U(0) + dx - (isLeft ? 0 : D), y0 + H - b + dy, D, 0.3);
+
+  // bolt heads, as on the drawing: both ends of each rail plus the mid-span
+  ctx.fillStyle = P.bolt;
+  const bolts = [[b / 2, b / 2], [D - b / 2, b / 2], [b / 2, H - b / 2],
+                 [D - b / 2, H - b / 2], [D - b / 2, H / 2]];
+  for (const [u, v] of bolts) {
+    ctx.beginPath(); ctx.arc(U(u) + dx, y0 + v + dy, 0.42, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------
@@ -283,8 +337,8 @@ function drawParkZone(ctx, side) {
 //  stacks need: without it the whole tube's worth of displacement shows up as
 //  an exposed dark base and the top block looks black.
 // ---------------------------------------------------------------------------
-function drawBlock(ctx, b, alpha, z0) {
-  const S = FIELD.BLOCK.size, lo = z0 || 0, hi = lo + FIELD.BLOCK.height;
+function drawBlock(ctx, b, alpha, z0, sizeScale) {
+  const S = FIELD.BLOCK.size * (sizeScale || 1), lo = z0 || 0, hi = lo + FIELD.BLOCK.height;
   const col = b.color === 'red' ? P.red : P.blue, sideCol = b.color === 'red' ? P.redSide : P.blueSide;
   const base = octPts(b.x, b.y, S);
 
@@ -412,12 +466,14 @@ function drawLoader(ctx, lx, ly, blocks) {
   const base = circlePts(lx, ly, r);
 
   withShadow(ctx, H, c => pathOf(c, base));
-  drawPrism(ctx, base, 0, H, P.glassSide, null, null);        // the cylinder wall
+  drawPrism(ctx, base, 0, H, P.tubeSide, null, null);         // the cylinder wall
 
-  for (const b of (blocks || [])) drawBlock(ctx, b, 0.95, 1.2 + b.stack * 3.3);
+  // Six blocks fill a 21 in tube almost exactly, so they are drawn a little
+  // under size: at true scale the stack reads as one solid column.
+  for (const b of (blocks || [])) drawBlock(ctx, b, 0.95, 1.0 + b.stack * 3.32, 0.78);
 
   const top = shiftPts(base, H);
-  ctx.fillStyle = P.glass;       pathOf(ctx, top); ctx.fill();
+  ctx.fillStyle = P.tubeTop;     pathOf(ctx, top); ctx.fill();
   ctx.strokeStyle = P.glassEdge; ctx.lineWidth = 0.16; pathOf(ctx, top); ctx.stroke();
 
   const c = centroid(top);
