@@ -52,6 +52,19 @@ let reveal = 1, revealAnim = null;     // 0..1 progressive draw of the path
 const DEFAULT_START = { x: 24, y: 24, h: 0 };
 const KEY = { start: r => 'vexsim.start.' + r, presets: r => 'vexsim.presets.' + r, hooks: r => 'vexsim.hooks.' + r };
 
+// Start poses and named placements live in localStorage, which survives F5 and
+// browser restarts. Some browsers refuse storage to file:// pages entirely, so
+// this probes once and the panel says which it is rather than silently losing
+// the user's placements.
+function storageWorks() {
+  try {
+    localStorage.setItem('vexsim.probe', '1');
+    const ok = localStorage.getItem('vexsim.probe') === '1';
+    localStorage.removeItem('vexsim.probe');
+    return ok;
+  } catch (e) { return false; }
+}
+
 const readJSON = (k, fallback) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fallback : v; } catch (e) { return fallback; } };
 const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
@@ -143,10 +156,22 @@ function buildWarnings() {
 
   if (!sim.abort && !solid.length) add('ok', 'no contact with anything on the field');
 
-  const drift = sim.moves.length ? sim.moves[sim.moves.length - 1].headingEnd : 0;
-  const asked = sim.moves.length ? sim.moves[sim.moves.length - 1].headingAsked + start.h : 0;
-  const d = wrap180(drift - asked);
-  if (Math.abs(d) > 3) add('bad', `<b>net heading drift ${d.toFixed(1)}°</b> at the end of the routine`);
+  // Both headings are reported in the code's own gyro frame, so they compare
+  // directly. An earlier version added the start orientation to one side and
+  // not the other, which made this read as a constant ~90 degree drift.
+  const last = sim.moves[sim.moves.length - 1];
+  if (last && Math.abs(last.headingGap) > 3)
+    add('bad', `<b>finishes ${last.headingGap.toFixed(1)}° short of the last commanded heading</b> ` +
+               `<span class="dim">(asked ${last.headingAsked}°, reached ${last.headingEnd.toFixed(1)}°)</span>`);
+
+  const turns = sim.moves.filter(m => m.type === 'turn');
+  const worst = turns.reduce((w, m) => Math.abs(m.headingGap) > Math.abs(w) ? m.headingGap : w, 0);
+  if (Math.abs(worst) > 3)
+    add('info', `worst turn ends <b>${worst.toFixed(1)}°</b> off target`);
+
+  if (sim.pickups.length || sim.releases.length)
+    add('info', `intake sweeps <b>${sim.pickups.length}</b> block${sim.pickups.length === 1 ? '' : 's'}` +
+                ` and ejects <b>${sim.releases.length}</b>`);
 }
 
 // ---------------------------------------------------------------------------
@@ -552,15 +577,34 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = css.getPropertyValue('--stage').trim(); ctx.fillRect(0, 0, W, H);
 
+  // Blocks the capture zone has already swept are drawn out: they are inside
+  // the robot, and leaving them on the floor under the chassis looks wrong.
+  const iNow = sim ? Math.min(sim.ticks.length - 1, Math.round(timeMs / ROBOT.sim.tick_ms)) : 0;
+  const swept = new Set();
+  if (sim) for (const p of sim.pickups) if (p.tick <= iNow) swept.add(p.id);
+
   ctx.save();
   ctx.setTransform(dpr * view.s, 0, 0, -dpr * view.s, dpr * view.tx, dpr * view.ty);
-  drawField(ctx, view.s, null);
+  drawField(ctx, view.s, swept);
   ctx.restore();
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   drawPaths();
 
   if (sim) {
+    // The capture zone, kept deliberately faint: it shows where the robot is
+    // TRYING to collect. Claiming more than that would be a guess.
+    const now = sim.ticks[iNow];
+    if (now && now.ik === 1) {
+      const w = intakeWedge(now, ROBOT).map(q => toScreen(q.x, q.y));
+      ctx.save();
+      ctx.beginPath(); w.forEach((q, i) => i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)); ctx.closePath();
+      ctx.fillStyle = 'rgba(42,157,92,0.12)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(42,157,92,0.34)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.restore();
+    }
+    $('carried').textContent = sim.carried[iNow] + ' / ' + sim.capacity;
+
     drawRobot({ ...start }, { alpha: 0.35, fill: 'rgba(47,111,176,0.25)', stroke: '#2f6fb0', front: '#2f6fb0' });
     drawStartHandle();
     const p = poseAt(Math.min(timeMs, (Math.max(1, Math.floor(sim.ticks.length * reveal)) - 1) * ROBOT.sim.tick_ms));
@@ -638,6 +682,8 @@ for (const [id, key, fmt] of [['sl-load', 'load_factor', v => v.toFixed(2)],
     runSim(false); draw();
   });
 }
+
+document.getElementById('storage').textContent = storageWorks() ? 'kept across F5' : 'blocked by browser';
 
 window.addEventListener('resize', resize);
 setTheme('light');

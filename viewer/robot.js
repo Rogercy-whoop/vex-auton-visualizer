@@ -25,6 +25,19 @@ window.ROBOT = {
     width_in: 8.5,
     reach_in: 4.8,           // 1.5 x 3.23 in block
     side_deg: 15,
+    capacity: 3,             // blocks the robot can hold at once  [CALIBRATE]
+    release_ms: 350,         // time to eject one block            [CALIBRATE]
+  },
+
+  // ---- the pneumatic intake plate ------------------------------------------
+  // Deploys forward and LOW, so it slides underneath a loader tube rather than
+  // hitting it. That is why it is deliberately NOT part of the collision
+  // footprint: collision uses the chassis rectangle above, which is what
+  // actually stops against the tube. Set `collides` true if your plate is high
+  // enough to catch on things.
+  plate: {
+    reach_in: 5.0,           // how far it extends past the chassis  [MEASURE]
+    collides: false,
   },
 
   // ---- drivetrain model: the ONLY physics in the simulator -----------------

@@ -81,14 +81,13 @@ const BLOCKS = (() => {
     add(cx,          cy - sy * S, col);
   }
 
-  // Loaders: three blocks stacked per tube.
-  // Right side: lower tube blue, upper tube red. Left side mirrors it.
-  const loaderColor = (lx, ly) => {
-    const right = lx > C, lower = ly < C;
-    return right ? (lower ? 'blue' : 'red') : (lower ? 'red' : 'blue');
-  };
-  for (const lx of FIELD.LOADER.x) for (const ly of FIELD.LOADER.y)
-    for (let k = 0; k < 3; k++) add(lx, ly, loaderColor(lx, ly), { loader: true, stack: k });
+  // Loaders: six blocks stacked per tube. The lower three are the alliance
+  // colour of that side of the field, the upper three the opposite colour.
+  // Right side is blue, left side is red.
+  for (const lx of FIELD.LOADER.x) for (const ly of FIELD.LOADER.y) {
+    const own = lx > C ? 'blue' : 'red', other = lx > C ? 'red' : 'blue';
+    for (let k = 0; k < 6; k++) add(lx, ly, k < 3 ? own : other, { loader: true, stack: k });
+  }
 
   return B;
 })();
@@ -100,9 +99,9 @@ const THEMES = {
   light: {
     wall: '#b9bec6', wallTop: '#d6dbe2',
     tileA: '#989ea6', tileB: '#8f959d',
-    seam: 'rgba(48,54,62,0.34)', seamHi: 'rgba(255,255,255,0.12)',
+    seam: 'rgba(48,54,62,0.24)', seamHi: 'rgba(255,255,255,0.09)',
     tape: 'rgba(250,251,253,0.70)',
-    glass: 'rgba(226,232,240,0.60)', glassEdge: 'rgba(58,68,80,0.55)',
+    glass: 'rgba(226,232,240,0.46)', glassEdge: 'rgba(58,68,80,0.55)',
     glassSide: 'rgba(168,178,190,0.80)', glassHi: 'rgba(255,255,255,0.75)',
     slot: 'rgba(78,88,101,0.38)',
     strut: '#e0892d', strutSide: '#a8621b',
@@ -112,9 +111,9 @@ const THEMES = {
   dark: {
     wall: '#363b43', wallTop: '#474d56',
     tileA: '#7a8088', tileB: '#70767e',
-    seam: 'rgba(15,18,23,0.48)', seamHi: 'rgba(255,255,255,0.09)',
+    seam: 'rgba(15,18,23,0.36)', seamHi: 'rgba(255,255,255,0.07)',
     tape: 'rgba(245,248,252,0.68)',
-    glass: 'rgba(208,218,230,0.50)', glassEdge: 'rgba(16,20,26,0.62)',
+    glass: 'rgba(208,218,230,0.40)', glassEdge: 'rgba(16,20,26,0.62)',
     glassSide: 'rgba(128,140,154,0.78)', glassHi: 'rgba(255,255,255,0.60)',
     slot: 'rgba(18,22,28,0.50)',
     strut: '#d9822b', strutSide: '#96581a',
@@ -329,7 +328,12 @@ function drawLongGoal(ctx, gy, blocks) {
   ctx.fillStyle = P.strut;                                   // end caps
   ctx.fillRect(px, py, g.cap, W);
   ctx.fillRect(px + L - g.cap, py, g.cap, W);
-  ctx.fillRect(px + L / 2 - g.band / 2, py, g.band, W);      // centre band
+  // The centre band is translucent: solid orange over the middle of the bar
+  // hides the blocks sitting on the floor underneath, and it is exactly that
+  // show-through which tells you the bar is above them.
+  ctx.save(); ctx.globalAlpha = 0.45;
+  ctx.fillRect(px + L / 2 - g.band / 2, py, g.band, W);
+  ctx.restore();
 
   ctx.fillStyle = P.slot;                                    // the hook slot
   ctx.fillRect(px + g.cap, py + W / 2 - g.slot / 2, L - 2 * g.cap, g.slot);
@@ -360,7 +364,7 @@ function drawCenterGoal(ctx) {
   // orange bracing, under both arms
   drawPrism(ctx, circlePts(C, C, 2.5, 20), 0, cg.heightLower - 1.6, P.strutSide, P.strut, null);
 
-  const paintArm = (ang, H) => {
+  const paintArm = (ang, H, dim) => {
     const plate = armPlate(ang);
     const top = drawPrism(ctx, plate, 0, H, P.glassSide, P.glass, P.glassEdge);
     ctx.save();
@@ -370,21 +374,31 @@ function drawCenterGoal(ctx) {
     ctx.fillStyle = P.slot;    ctx.fillRect(-L / 2, -cg.slot / 2, L, cg.slot);
     ctx.fillStyle = P.glassHi; ctx.fillRect(-L / 2 + 0.8, -cg.width / 2 + cg.width * 0.13, L - 1.6, 0.28);
     ctx.restore();
+    if (dim) {                       // the lower arm sits in the upper one's light
+      ctx.save(); ctx.globalAlpha = dim; ctx.fillStyle = P.shadow;
+      pathOf(ctx, top); ctx.fill(); ctx.restore();
+    }
     ctx.strokeStyle = P.glassEdge; ctx.lineWidth = 0.16; pathOf(ctx, top); ctx.stroke();
     return top;
   };
 
-  const lowTop = paintArm(lower, cg.heightLower);
+  const lowTop = paintArm(lower, cg.heightLower, 0.14);
 
   // the upper arm's shadow, falling across the lower one
   ctx.save();
   pathOf(ctx, lowTop); ctx.clip();
-  ctx.globalAlpha = 0.22; ctx.fillStyle = P.shadow;
-  ctx.translate(0.7, -0.7);
+  ctx.globalAlpha = 0.40; ctx.fillStyle = P.shadow;
+  ctx.translate(1.0, -1.0);
   pathOf(ctx, armPlate(upper)); ctx.fill();
   ctx.restore();
 
-  paintArm(upper, cg.heightUpper);
+  const upTop = paintArm(upper, cg.heightUpper, 0);
+
+  // a bright rim along the upper arm makes which one is on top unmissable
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.80)'; ctx.lineWidth = 0.34;
+  pathOf(ctx, upTop); ctx.stroke();
+  ctx.restore();
 
   const hub = shiftPts(circlePts(C, C, 1.5, 16), cg.heightUpper);
   ctx.fillStyle = 'rgba(255,255,255,0.28)'; pathOf(ctx, hub); ctx.fill();

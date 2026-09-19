@@ -168,7 +168,7 @@ function runDrive(st, a, R, ticks, moveIdx, world) {            // drive.cpp:191
     const dOut = clamp(drivePID.compute(driveErr),     -a.drive_max_v,   a.drive_max_v);
     const hOut = clamp(headingPID.compute(headingErr), -a.heading_max_v, a.heading_max_v);
     contact = noteContact(contact, stepChassis(st, dOut + hOut, dOut - hOut, R, world), st.t);
-    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx });
+    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik });
     if (st.t - t0 >= HANG_LIMIT_MS) { hung = true; break; }
   }
   brake(st);
@@ -194,7 +194,7 @@ function runTurn(st, a, R, ticks, moveIdx, world) {             // drive.cpp:140
     const err = wrap180(target - st.h);
     const out = clamp(pid.compute(err), -a.turn_max_v, a.turn_max_v);
     contact = noteContact(contact, stepChassis(st, out, -out, R, world), st.t);
-    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx });
+    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik });
     if (st.t - t0 >= HANG_LIMIT_MS) { hung = true; break; }
   }
   brake(st);
@@ -211,7 +211,7 @@ function runWait(st, ms, ticks, moveIdx) {
   const n = Math.round(ms / ROBOT.sim.tick_ms);
   for (let i = 0; i < n; i++) {
     st.t += ROBOT.sim.tick_ms;
-    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx });
+    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik });
   }
 }
 
@@ -253,8 +253,9 @@ function simulate(log, R, start, opts) {
   const obstacles = buildObstacles();
 
   const st = { x: start.x, y: start.y, h: start.h, hOff: start.h,
-               sL: 0, sR: 0, encL: 0, encR: 0, t: 0 };
-  const ticks = [{ t: 0, x: st.x, y: st.y, h: st.h, move: -1 }];
+               sL: 0, sR: 0, encL: 0, encR: 0, t: 0,
+               ik: 0, intakeOn: false, shooterOn: false };
+  const ticks = [{ t: 0, x: st.x, y: st.y, h: st.h, move: -1, ik: 0 }];
   const moves = [], events = [], contacts = [];
   let abort = null;
 
@@ -271,6 +272,15 @@ function simulate(log, R, start, opts) {
       case 'turn':  m = runTurn (st, a, R, ticks, idx, world); moves.push(m); break;
       case 'wait':  runWait(st, a.ms, ticks, idx - 1); break;
       case 'motor':
+        // intake running with the shooter stopped is intake_hold -- collecting.
+        // intake plus shooter forward is intake_high -- ejecting out of the top.
+        // The distinction is not asserted here; it comes straight out of
+        // autofunction.cpp, which is the user's own code and is compiled.
+        if (a.name === 'intake')  st.intakeOn  = a.action !== 'stop';
+        if (a.name === 'shooter') st.shooterOn = a.action !== 'stop';
+        st.ik = !st.intakeOn ? 0 : (st.shooterOn ? 2 : 1);
+        events.push({ tick: ticks.length - 1, x: st.x, y: st.y, action: a });
+        break;
       case 'pneumatic':
         events.push({ tick: ticks.length - 1, x: st.x, y: st.y, action: a });
         break;
@@ -288,6 +298,80 @@ function simulate(log, R, start, opts) {
     }
   }
 
-  return { ticks, moves, events, contacts, abort,
+  const intake = computeIntake(ticks, R);
+
+  return { ticks, moves, events, contacts, abort, ...intake,
            intent: intentPath(log, start), duration_ms: st.t };
+}
+
+// ---------------------------------------------------------------------------
+//  computeIntake
+//
+//  A deliberately thin model, and worth being clear about what it does and
+//  does not claim.
+//
+//  CLAIMS: while the intake is running, these blocks passed through the
+//  capture zone in front of the robot, in this order, at these times. That is
+//  geometry, and it is checkable against the field.
+//
+//  DOES NOT CLAIM: that the robot actually got them. Whether a block is drawn
+//  in depends on approach angle, roller grip and how the block is sitting --
+//  none of which are modelled, and guessing would produce a confident picture
+//  that is wrong. What the tool is really useful for is the opposite finding:
+//  the wedge sweeping over empty floor, which means the path missed.
+//
+//  Ejecting (intake_high) releases blocks at a fixed rate; where they end up
+//  is not modelled either, so they simply leave the robot.
+// ---------------------------------------------------------------------------
+function intakeWedge(p, R) {
+  const I = R.intake;
+  const near = I.width_in / 2;
+  const far  = near + I.reach_in * Math.tan(I.side_deg * Math.PI / 180);
+  const y0 = R.length_in / 2 - R.center_offset_in;   // the robot's front face
+  const y1 = y0 + I.reach_in;
+  const a = p.h * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+  // local (u = right, v = forward) -> field
+  return [[-near, y0], [near, y0], [far, y1], [-far, y1]]
+    .map(([u, v]) => ({ x: p.x + u * ca + v * sa, y: p.y - u * sa + v * ca }));
+}
+
+function pointInPoly(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > pt.y) !== (b.y > pt.y) &&
+        pt.x < (b.x - a.x) * (pt.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+function computeIntake(ticks, R) {
+  const cap = R.intake.capacity, rate = R.intake.release_ms;
+  const pickups = [];            // { id, tick, t }
+  const releases = [];           // { tick, t }
+  const carried = new Array(ticks.length).fill(0);
+  const taken = new Set();
+  let held = 0, ejectTimer = 0;
+
+  for (let i = 0; i < ticks.length; i++) {
+    const p = ticks[i];
+    if (p.ik === 1 && held < cap) {
+      const wedge = intakeWedge(p, R);
+      for (const b of BLOCKS) {
+        if (taken.has(b.id) || b.loader) continue;     // loader tubes need the plate
+        if (pointInPoly(b, wedge)) {
+          taken.add(b.id); held++; pickups.push({ id: b.id, tick: i, t: p.t });
+          if (held >= cap) break;
+        }
+      }
+    } else if (p.ik === 2 && held > 0) {
+      ejectTimer += R.sim.tick_ms;
+      if (ejectTimer >= rate) { ejectTimer = 0; held--; releases.push({ tick: i, t: p.t }); }
+    } else {
+      ejectTimer = 0;
+    }
+    carried[i] = held;
+  }
+
+  return { pickups, releases, carried, capacity: cap };
 }
