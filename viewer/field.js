@@ -104,7 +104,7 @@ const THEMES = {
     glass: 'rgba(226,232,240,0.46)', glassEdge: 'rgba(58,68,80,0.55)',
     glassSide: 'rgba(168,178,190,0.80)', glassHi: 'rgba(255,255,255,0.75)',
     slot: 'rgba(78,88,101,0.38)',
-    tubeSide: 'rgba(150,162,176,0.94)', tubeTop: 'rgba(226,232,240,0.55)',
+    tubeSide: '#9aa4b2', tubeGlass: 'rgba(238,243,249,0.30)', tubeTop: 'rgba(214,223,233,0.88)',
     bolt: 'rgba(40,46,54,0.55)',
     strut: '#e0892d', strutSide: '#a8621b',
     red: '#d9283c', redSide: '#8e1a27', blue: '#2492e6', blueSide: '#155f9a',
@@ -118,7 +118,7 @@ const THEMES = {
     glass: 'rgba(208,218,230,0.40)', glassEdge: 'rgba(16,20,26,0.62)',
     glassSide: 'rgba(128,140,154,0.78)', glassHi: 'rgba(255,255,255,0.60)',
     slot: 'rgba(18,22,28,0.50)',
-    tubeSide: 'rgba(112,124,138,0.94)', tubeTop: 'rgba(206,216,228,0.48)',
+    tubeSide: '#78838f', tubeGlass: 'rgba(226,234,243,0.26)', tubeTop: 'rgba(186,197,210,0.85)',
     bolt: 'rgba(10,13,17,0.6)',
     strut: '#d9822b', strutSide: '#96581a',
     red: '#e0243c', redSide: '#8c1625', blue: '#2196f3', blueSide: '#125b95',
@@ -458,31 +458,80 @@ function drawCenterGoal(ctx) {
   ctx.fillStyle = 'rgba(255,255,255,0.28)'; pathOf(ctx, hub); ctx.fill();
 }
 
+// Outline of a cylinder seen from above and to one side: the convex hull of
+// its base circle and its displaced top circle. Andrew's monotone chain.
+function convexHull(pts) {
+  const p = pts.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower = [], upper = [];
+  for (const q of p) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], q) <= 0) lower.pop();
+    lower.push(q);
+  }
+  for (let i = p.length - 1; i >= 0; i--) {
+    const q = p[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], q) <= 0) upper.pop();
+    upper.push(q);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+
 // ---------------------------------------------------------------------------
-//  Loader: a clear tube with an orange collar, three blocks stacked inside.
+//  Loader: a clear tube standing 21 in tall with an orange collar.
+//
+//  The tube body is drawn as a solid, then the blocks, then a translucent
+//  overlay -- so the blocks read as being INSIDE the tube rather than painted
+//  on the floor, and the tube itself still reads as a solid object. Drawing
+//  the whole thing translucent, as an earlier version did, made the tube
+//  disappear entirely: all that was left was the orange collar.
+//
+//  `blocks` is whatever is LEFT in the tube. They are re-stacked from the
+//  bottom rather than sitting at their original heights, so when the intake
+//  draws the lower ones out the rest fall, which is what a real stack does.
 // ---------------------------------------------------------------------------
 function drawLoader(ctx, lx, ly, blocks) {
   const r = FIELD.LOADER.diameter / 2, H = FIELD.LOADER.height;
   const base = circlePts(lx, ly, r);
-
-  withShadow(ctx, H, c => pathOf(c, base));
-  drawPrism(ctx, base, 0, H, P.tubeSide, null, null);         // the cylinder wall
-
-  // Six blocks fill a 21 in tube almost exactly, so they are drawn a little
-  // under size: at true scale the stack reads as one solid column.
-  for (const b of (blocks || [])) drawBlock(ctx, b, 0.95, 1.0 + b.stack * 3.32, 0.78);
-
   const top = shiftPts(base, H);
-  ctx.fillStyle = P.tubeTop;     pathOf(ctx, top); ctx.fill();
-  ctx.strokeStyle = P.glassEdge; ctx.lineWidth = 0.16; pathOf(ctx, top); ctx.stroke();
+  const hull = convexHull(base.concat(top));
 
-  const c = centroid(top);
+  withShadow(ctx, H, c => pathOf(c, hull));
+
+  ctx.fillStyle = P.tubeSide; pathOf(ctx, hull); ctx.fill();          // solid body
+
+  ctx.save();
+  pathOf(ctx, hull); ctx.clip();
+  const left = (blocks || []).slice().sort((a, b) => a.stack - b.stack);
+  left.forEach((b, k) => drawBlock(ctx, b, 1, 1.0 + k * 3.32, 0.74));  // gravity
+  ctx.restore();
+
+  ctx.fillStyle = P.tubeGlass; pathOf(ctx, hull); ctx.fill();         // plastic over them
+  ctx.strokeStyle = P.glassEdge; ctx.lineWidth = 0.22; pathOf(ctx, hull); ctx.stroke();
+
+  // a highlight running the length of the tube, offset across its axis
+  const c0 = centroid(base), c1 = centroid(top);
+  const ax = c1.x - c0.x, ay = c1.y - c0.y, len = Math.hypot(ax, ay) || 1;
+  const nx = -ay / len * r * 0.45, ny = ax / len * r * 0.45;
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = r * 0.28;
+  ctx.beginPath();
+  ctx.moveTo(c0.x + nx, c0.y + ny); ctx.lineTo(c1.x + nx, c1.y + ny);
+  ctx.stroke();
+
+  // where it meets the floor
+  ctx.strokeStyle = 'rgba(30,36,44,0.35)'; ctx.lineWidth = 0.18;
+  pathOf(ctx, base); ctx.stroke();
+
+  // open top, then the orange collar
+  ctx.fillStyle = P.tubeTop;     pathOf(ctx, top); ctx.fill();
+  ctx.strokeStyle = P.glassEdge; ctx.lineWidth = 0.2; pathOf(ctx, top); ctx.stroke();
+
   ctx.strokeStyle = P.strutSide; ctx.lineWidth = r * 0.48;
-  ctx.beginPath(); ctx.arc(c.x, c.y - 0.3, r * 0.78, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(c1.x, c1.y - 0.3, r * 0.78, 0, Math.PI * 2); ctx.stroke();
   ctx.strokeStyle = P.strut; ctx.lineWidth = r * 0.42;
-  ctx.beginPath(); ctx.arc(c.x, c.y, r * 0.78, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(c1.x, c1.y, r * 0.78, 0, Math.PI * 2); ctx.stroke();
   ctx.strokeStyle = P.glassHi; ctx.lineWidth = r * 0.13;
-  ctx.beginPath(); ctx.arc(c.x, c.y, r * 0.93, Math.PI * 0.62, Math.PI * 1.18); ctx.stroke();
+  ctx.beginPath(); ctx.arc(c1.x, c1.y, r * 0.93, Math.PI * 0.62, Math.PI * 1.18); ctx.stroke();
 }
 
 // ---------------------------------------------------------------------------
