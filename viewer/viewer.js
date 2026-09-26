@@ -1,14 +1,19 @@
 // ============================================================================
-//  viewer/viewer.js  --  camera, playback, start-pose placement, tools
+//  viewer/viewer.js  --  camera, playback, placement, code panel, tools
 // ----------------------------------------------------------------------------
 //  Data flow:
 //     out/logs.js  +  start pose  ->  simulate()  ->  ticks in FIELD coords
+//     out/source.js                ->  the code panel
+//     out/profile.js               ->  robot.js (already merged into ROBOT)
 //
-//  The start pose is an input to the simulation now, not a transform applied
+//  The start pose is an input to the simulation, not a transform applied
 //  afterwards: the robot collides with real obstacles, so where it starts
 //  changes what it hits. Dragging therefore re-runs the simulation -- but only
-//  a routine or model change replays the drawing animation, because watching
-//  the line redraw on every mouse move would be noise, not feedback.
+//  a routine or model change replays the drawing animation.
+//
+//  Every recorded action carries the file and line that produced it (the
+//  compiler filled them in -- see mock/vex.h). That is what joins the path, the
+//  moves table and the code panel together.
 // ============================================================================
 
 const canvas = document.getElementById('field');
@@ -38,24 +43,18 @@ function resize() {
 }
 
 // ---------------------------------------------------------------------------
-//  Routine state
+//  What the build produced
 // ---------------------------------------------------------------------------
-const LOGS = window.VEXSIM_LOGS || {};
-let routine = Object.keys(LOGS)[0] || null;
-let sim = null;
-let start = { x: 24, y: 24, h: 0 };
-let hooks = new Set();                 // action indices whose goal contact is intended
-let timeMs = 0, playing = false, lastFrame = 0;
-let showIntent = true, showSim = true, showEvents = true;
-let reveal = 1, revealAnim = null;     // 0..1 progressive draw of the path
+const LOGS   = window.VEXSIM_LOGS   || {};
+const SOURCE = window.VEXSIM_SOURCE || {};
+const BUILD  = window.VEXSIM_BUILD  || null;
+const TEAM   = ROBOT.team || 'team';
 
-const DEFAULT_START = { x: 24, y: 24, h: 0 };
-const KEY = { start: r => 'vexsim.start.' + r, presets: r => 'vexsim.presets.' + r, hooks: r => 'vexsim.hooks.' + r };
-
-// Start poses and named placements live in localStorage, which survives F5 and
-// browser restarts. Some browsers refuse storage to file:// pages entirely, so
-// this probes once and the panel says which it is rather than silently losing
-// the user's placements.
+// ---------------------------------------------------------------------------
+//  Saved settings. Scoped by team, so two teams' routines that share a name
+//  (every template has a test()) keep separate placements. Our settings from
+//  before scoping existed are still read, so nothing already saved is lost.
+// ---------------------------------------------------------------------------
 function storageWorks() {
   try {
     localStorage.setItem('vexsim.probe', '1');
@@ -64,20 +63,32 @@ function storageWorks() {
     return ok;
   } catch (e) { return false; }
 }
-
-const readJSON = (k, fallback) => { try { const v = JSON.parse(localStorage.getItem(k)); return v == null ? fallback : v; } catch (e) { return fallback; } };
+const readRaw  = (k) => { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } };
 const writeJSON = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+const key = (kind, r) => `vexsim.${TEAM}.${kind}` + (r ? '.' + r : '');
+function readSaved(kind, r, fallback) {
+  let v = readRaw(key(kind, r));
+  if (v == null && TEAM === '117V') v = readRaw('vexsim.' + kind + (r ? '.' + r : ''));   // pre-scoping
+  return v == null ? fallback : v;
+}
 
-// The drivetrain constants are a calibration, not a preference: once they are
-// measured against a real run they should stay put. Saved globally rather than
-// per routine, because they describe the robot, not the routine.
-const MODEL_KEY = 'vexsim.model';
+// The drivetrain constants are a calibration, not a preference.
 const MODEL_DEFAULTS = { load_factor: ROBOT.sim.load_factor, tau_s: ROBOT.sim.tau_s, v_dead: ROBOT.sim.v_dead };
-Object.assign(ROBOT.sim, readJSON(MODEL_KEY, {}));
+Object.assign(ROBOT.sim, readSaved('model', null, {}));
 
 // ---------------------------------------------------------------------------
-//  Running the simulation
+//  Routine state
 // ---------------------------------------------------------------------------
+const DEFAULT_START = { x: 24, y: 24, h: 0 };
+let routine = null, sim = null;
+let start = { ...DEFAULT_START };
+let hooks = new Set();                 // action indices whose goal contact is intended
+let timeMs = 0, playing = false, lastFrame = 0;
+let showIntent = true, showSim = true, showEvents = true;
+let reveal = 1, revealAnim = null;     // 0..1 progressive draw of the path
+
+const actionOf = (i) => (LOGS[routine] && LOGS[routine].actions[i]) || null;
+
 function runSim(animate) {
   if (!routine) return;
   const t0 = performance.now();
@@ -88,6 +99,7 @@ function runSim(animate) {
   $('timeline').max = sim.duration_ms;
   buildMovesTable();
   buildWarnings();
+  markCodeLines();
 
   if (animate) {
     setStatus(`simulating ${routine} …`, true);
@@ -107,8 +119,9 @@ function setStatus(text, busy) {
 
 function selectRoutine(name) {
   routine = name;
-  start = readJSON(KEY.start(name), { ...DEFAULT_START });
-  hooks = new Set(readJSON(KEY.hooks(name), []));
+  writeJSON(key('last'), name);
+  start = readSaved('start', name, { ...DEFAULT_START });
+  hooks = new Set(readSaved('hooks', name, []));
   timeMs = 0; playing = false; $('btn-play').textContent = 'Play';
   syncStartInputs();
   buildPresets();
@@ -119,8 +132,7 @@ function selectRoutine(name) {
 function poseAt(ms) {
   if (!sim) return { ...start };
   const T = sim.ticks;
-  const i = Math.max(0, Math.min(T.length - 1, Math.round(ms / ROBOT.sim.tick_ms)));
-  return T[i];
+  return T[Math.max(0, Math.min(T.length - 1, Math.round(ms / ROBOT.sim.tick_ms)))];
 }
 
 function robotCorners(p) {
@@ -131,55 +143,76 @@ function robotCorners(p) {
     .map(([u, v]) => ({ x: cx + u * ca + v * sa, y: cy - u * sa + v * ca }));
 }
 
+function jumpTo(ms) {
+  timeMs = Math.max(0, Math.min(ms, sim ? sim.duration_ms : 0));
+  playing = false; $('btn-play').textContent = 'Play';
+  draw();
+}
+
 // ---------------------------------------------------------------------------
 //  Warnings
 // ---------------------------------------------------------------------------
+const lineRef = (a) => a ? `<a class="lnk" data-file="${a.file}" data-line="${a.line}">${a.file}:${a.line}</a>` : '';
+
 function buildWarnings() {
   const box = $('warnings');
   box.innerHTML = '';
   if (!sim) return;
-
   const add = (cls, html) => { const d = document.createElement('div'); d.className = 'warn ' + cls; d.innerHTML = html; box.appendChild(d); };
 
-  if (sim.abort) {
-    add('bad', `<b>Stopped at move #${sim.abort.move}</b><br>` +
+  if (LOGS[routine].overran)
+    add('bad', `<b>This routine never finished.</b> It was still running after 3 minutes of simulated time, ` +
+               `which almost always means a <code>waitUntil()</code> on a sensor — and no sensor ever changes in ` +
+               `simulation. Everything up to that point is shown.`);
+
+  if (sim.abort && sim.abort.reason === 'unsimulated') {
+    add('bad', `<b>Path ends at ${lineRef(actionOf(sim.abort.move))}</b><br>` +
+      `<code>${sim.abort.name}()</code> steers by odometry, which is not simulated yet, so where the robot ` +
+      `goes from here would be a guess.`);
+  } else if (sim.abort) {
+    add('bad', `<b>Stopped at ${lineRef(actionOf(sim.abort.move))}</b><br>` +
       `Oblique contact with the ${sim.abort.name} at ${(sim.abort.t / 1000).toFixed(2)} s. ` +
-      `What the robot does after a glancing hit is not predictable, so the path ends here ` +
-      `rather than guessing. The line shown is everything up to the impact.` +
+      `What a robot does after a glancing hit is not predictable, so the path ends here rather than ` +
+      `guessing. The line shown is everything up to the impact.` +
       `<br><span class="dim">If you have not placed the start pose yet, do that first — a routine ` +
       `started in the wrong corner will drive into a wall almost immediately.</span>`);
   }
 
   const solid = sim.contacts.filter(c => !c.unpredictable);
-  if (solid.length) {
-    const byName = {};
-    for (const c of solid) (byName[c.name] = byName[c.name] || []).push(c);
-    for (const name of Object.keys(byName)) {
-      const list = byName[name];
-      add('info', `<b>touches the ${name}</b> ${list.length}×, first at ` +
-        `${(list[0].t / 1000).toFixed(2)} s <span class="dim">(square contact — squares the robot up)</span>`);
-    }
+  const byName = {};
+  for (const c of solid) (byName[c.name] = byName[c.name] || []).push(c);
+  for (const name of Object.keys(byName)) {
+    const list = byName[name];
+    add('info', `<b>touches the ${name}</b> ${list.length}×, first at ${lineRef(actionOf(list[0].move))} ` +
+      `<span class="dim">(square contact — squares the robot up)</span>`);
   }
-
   if (!sim.abort && !solid.length) add('ok', 'no contact with anything on the field');
 
-  // Both headings are reported in the code's own gyro frame, so they compare
-  // directly. An earlier version added the start orientation to one side and
-  // not the other, which made this read as a constant ~90 degree drift.
+  // Headings are reported in the code's own gyro frame, so they compare directly.
   const last = sim.moves[sim.moves.length - 1];
   if (last && Math.abs(last.headingGap) > 3)
     add('bad', `<b>finishes ${last.headingGap.toFixed(1)}° short of the last commanded heading</b> ` +
-               `<span class="dim">(asked ${last.headingAsked}°, reached ${last.headingEnd.toFixed(1)}°)</span>`);
+               `<span class="dim">(asked ${last.headingAsked}°, reached ${last.headingEnd.toFixed(1)}° — ${lineRef(actionOf(last.i))})</span>`);
 
-  const turns = sim.moves.filter(m => m.type === 'turn');
-  const worst = turns.reduce((w, m) => Math.abs(m.headingGap) > Math.abs(w) ? m.headingGap : w, 0);
-  if (Math.abs(worst) > 3)
-    add('info', `worst turn ends <b>${worst.toFixed(1)}°</b> off target`);
+  const turns = sim.moves.filter(m => m.type !== 'drive');
+  const worst = turns.reduce((w, m) => Math.abs(m.headingGap) > Math.abs(w.headingGap || 0) ? m : w, {});
+  if (worst.headingGap !== undefined && Math.abs(worst.headingGap) > 3)
+    add('info', `worst turn ends <b>${worst.headingGap.toFixed(1)}°</b> off target at ${lineRef(actionOf(worst.i))}`);
 
-  if (sim.pickups.length || sim.releases.length)
+  if (sim.pickups.length || sim.releases.length) {
+    const fromLoader = sim.pickups.filter(p => p.from === 'loader').length;
     add('info', `intake sweeps <b>${sim.pickups.length}</b> block${sim.pickups.length === 1 ? '' : 's'}` +
-                ` and ejects <b>${sim.releases.length}</b>`);
+                (fromLoader ? ` (${fromLoader} from a loader)` : '') + ` and ejects <b>${sim.releases.length}</b>`);
+  }
 }
+
+// Line references anywhere in the sidebar open the code panel at that line.
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('.lnk');
+  if (!a) return;
+  e.preventDefault();
+  openCode(a.dataset.file, +a.dataset.line, true);
+});
 
 // ---------------------------------------------------------------------------
 //  Move table
@@ -191,29 +224,34 @@ function buildMovesTable() {
   let worst = 0, timeouts = 0;
 
   for (const m of sim.moves) {
+    const a = actionOf(m.i);
     const tr = document.createElement('tr');
     const bad = m.type === 'drive' ? Math.abs(m.gap) > 2 : Math.abs(m.headingGap) > 2;
     if (m.exit === 'hung') tr.className = 'hung'; else if (bad) tr.className = 'bad';
     const f1 = (v) => (v === undefined ? '' : v.toFixed(1));
     const hookOn = hooks.has(m.i);
     const mark = m.contact ? (m.contact.unpredictable ? '✕' : '●') : '';
-    tr.innerHTML = (m.type === 'drive'
-      ? `<td>${m.i}</td><td>drive</td><td>${f1(m.asked)}</td><td>${f1(m.achieved)}</td><td>${f1(m.gap)}</td>`
-      : `<td>${m.i}</td><td>turn</td><td>${f1(m.headingAsked)}°</td><td>${f1(m.headingEnd)}°</td><td>${f1(m.headingGap)}°</td>`)
+    const kind = m.type === 'swing' ? (m.side === 'left' ? 'swing L' : 'swing R') : m.type;
+    tr.innerHTML =
+        `<td>${a ? `<a class="lnk" data-file="${a.file}" data-line="${a.line}">${a.line}</a>` : ''}</td><td>${kind}</td>`
+      + (m.type === 'drive'
+          ? `<td>${f1(m.asked)}</td><td>${f1(m.achieved)}</td><td>${f1(m.gap)}</td>`
+          : `<td>${f1(m.headingAsked)}°</td><td>${f1(m.headingEnd)}°</td><td>${f1(m.headingGap)}°</td>`)
       + `<td>${m.ms}</td><td>${m.exit}</td>`
       + `<td class="ct ${m.contact ? (m.contact.unpredictable ? 'x' : 'o') : ''}">${mark}</td>`
-      + `<td><span class="hook ${hookOn ? 'on' : ''}" data-i="${m.i}" title="mark this move as an intended hook engagement, so long-goal contact is ignored">⌐</span></td>`;
+      + `<td><span class="hook ${hookOn ? 'on' : ''}" data-i="${m.i}" title="mark as an intended hook engagement: long-goal contact is then ignored">⌐</span></td>`;
     tr.onclick = (e) => {
+      if (e.target.classList.contains('lnk')) return;          // handled globally
       if (e.target.classList.contains('hook')) {
         const i = +e.target.dataset.i;
         hooks.has(i) ? hooks.delete(i) : hooks.add(i);
-        writeJSON(KEY.hooks(routine), [...hooks]);
+        writeJSON(key('hooks', routine), [...hooks]);
         runSim(false); draw();
         return;
       }
-      const idx = sim.moves.indexOf(m);
-      const k = sim.ticks.findIndex(t => t.move === idx);
-      if (k >= 0) { timeMs = k * ROBOT.sim.tick_ms; playing = false; $('btn-play').textContent = 'Play'; draw(); }
+      const span = sim.spans.find(s => s.i === m.i);
+      if (span) jumpTo(span.t0);
+      if (a && codeOpen) showCodeLine(a.file, a.line, true);
     };
     tb.appendChild(tr);
     if (m.exit === 'timeout') timeouts++;
@@ -227,24 +265,165 @@ function buildMovesTable() {
 }
 
 // ---------------------------------------------------------------------------
+//  The code panel
+//
+//  Shows the team's own files, read-only, exactly as compiled. Lines that
+//  produced an action get a dot in the gutter; clicking one jumps the timeline
+//  to when it ran (again, to the next time it ran). During playback the line
+//  currently executing is highlighted. Editing happens in VEXcode: save,
+//  rebuild, refresh.
+// ---------------------------------------------------------------------------
+let codeOpen = false, codeFile = null, codeEls = [], codeHot = null;
+const CODE_FILES = Object.keys(SOURCE).sort((a, b) =>
+  (a === 'autons.cpp' ? -1 : b === 'autons.cpp' ? 1 : a.localeCompare(b)));
+
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const KW = new Set(['void', 'int', 'float', 'double', 'bool', 'char', 'auto', 'const', 'static', 'if', 'else',
+  'while', 'for', 'do', 'return', 'break', 'continue', 'switch', 'case', 'default', 'true', 'false',
+  'struct', 'class', 'using', 'namespace', 'new', 'delete', 'this', 'enum']);
+
+// A small highlighter: comments, strings, numbers, keywords, calls. Enough to
+// read by, and it carries /* ... */ across lines.
+function highlight(line, st) {
+  const t = (cls, s) => `<span class="${cls}">${esc(s)}</span>`;
+  if (!st.inBlock && /^\s*#/.test(line)) return t('pp', line);
+  let out = '', i = 0;
+  while (i < line.length) {
+    if (st.inBlock) {
+      const e = line.indexOf('*/', i);
+      if (e < 0) { out += t('cm', line.slice(i)); break; }
+      out += t('cm', line.slice(i, e + 2)); i = e + 2; st.inBlock = false; continue;
+    }
+    if (line.startsWith('//', i)) { out += t('cm', line.slice(i)); break; }
+    if (line.startsWith('/*', i)) { st.inBlock = true; out += t('cm', '/*'); i += 2; continue; }
+    const ch = line[i];
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < line.length && line[j] !== '"') j += line[j] === '\\' ? 2 : 1;
+      out += t('st', line.slice(i, j + 1)); i = j + 1; continue;
+    }
+    if (/[0-9]/.test(ch) || (ch === '.' && /[0-9]/.test(line[i + 1] || ''))) {
+      let j = i; while (j < line.length && /[0-9.a-fA-FxX]/.test(line[j])) j++;
+      out += t('nu', line.slice(i, j)); i = j; continue;
+    }
+    if (/[A-Za-z_]/.test(ch)) {
+      let j = i; while (j < line.length && /\w/.test(line[j])) j++;
+      const w = line.slice(i, j);
+      out += KW.has(w) ? t('kw', w) : (line[j] === '(' ? t('fn', w) : esc(w));
+      i = j; continue;
+    }
+    out += esc(ch); i++;
+  }
+  return out;
+}
+
+function renderCode(file) {
+  codeFile = file;
+  const body = $('code-body');
+  const lines = (SOURCE[file] || '').split(/\r?\n/);
+  const st = { inBlock: false };
+  body.innerHTML = lines.map((l, k) =>
+    `<div class="cl" data-l="${k + 1}"><span class="ln">${k + 1}</span><span class="gm"></span>` +
+    `<span class="lc">${highlight(l, st) || ' '}</span></div>`).join('');
+  codeEls = [null, ...body.children];
+  codeHot = null;
+  $('code-tabs').querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.f === file));
+  markCodeLines();
+}
+
+// Gutter dots: every line in this file that produced an action this run.
+function markCodeLines() {
+  if (!codeOpen || !codeFile || !sim) return;
+  for (let k = 1; k < codeEls.length; k++) codeEls[k].classList.remove('act', 'mv');
+  for (const s of sim.spans) {
+    if (s.file !== codeFile || !codeEls[s.line]) continue;
+    codeEls[s.line].classList.add('act');
+    if (s.type === 'drive' || s.type === 'turn' || s.type === 'swing') codeEls[s.line].classList.add('mv');
+  }
+}
+
+function showCodeLine(file, line, scroll) {
+  if (file !== codeFile) renderCode(file);
+  if (codeHot && codeEls[codeHot]) codeEls[codeHot].classList.remove('hot');
+  codeHot = line;
+  const el = codeEls[line];
+  if (!el) return;
+  el.classList.add('hot');
+  if (scroll) {
+    const body = $('code-body');
+    const top = el.offsetTop, bottom = top + el.offsetHeight;
+    if (top < body.scrollTop + 30 || bottom > body.scrollTop + body.clientHeight - 30)
+      body.scrollTop = top - body.clientHeight / 2;
+  }
+}
+
+function openCode(file, line, jump) {
+  if (!CODE_FILES.length) return;
+  if (!codeOpen) toggleCode(true);
+  showCodeLine(file || codeFile || CODE_FILES[0], line || 1, true);
+  if (jump && sim && line) {
+    const s = sim.spans.find(x => x.file === (file || codeFile) && x.line === line);
+    if (s) jumpTo(s.t0);
+  }
+}
+
+function toggleCode(on) {
+  codeOpen = on === undefined ? !codeOpen : on;
+  $('code').classList.toggle('hidden', !codeOpen);
+  $('btn-code').classList.toggle('active', codeOpen);
+  if (codeOpen && !codeFile && CODE_FILES.length) renderCode(CODE_FILES[0]);
+  markCodeLines();
+  resize();
+}
+
+// The line running at the current time: the latest action in the shown file
+// that has started by now.
+function followCode() {
+  if (!codeOpen || !sim) return;
+  let cur = null;
+  for (const s of sim.spans) {
+    if (s.t0 > timeMs) break;
+    if (s.file === codeFile) cur = s;
+  }
+  if (cur && cur.line !== codeHot) showCodeLine(codeFile, cur.line, true);
+}
+
+$('code-tabs').innerHTML = CODE_FILES.map(f => `<button data-f="${f}">${f}</button>`).join('');
+$('code-tabs').onclick = (e) => { const f = e.target.dataset && e.target.dataset.f; if (f) renderCode(f); };
+$('btn-code').onclick = () => toggleCode();
+$('btn-code-close').onclick = () => toggleCode(false);
+$('code-body').onclick = (e) => {
+  const row = e.target.closest('.cl');
+  if (!row || !sim) return;
+  const line = +row.dataset.l;
+  const hits = sim.spans.filter(s => s.file === codeFile && s.line === line);
+  if (!hits.length) return;
+  // click again to step to the next time this line runs
+  const next = hits.find(s => s.t0 > timeMs + 1) || hits[0];
+  showCodeLine(codeFile, line, false);
+  jumpTo(next.t0);
+};
+if (!CODE_FILES.length) $('btn-code').title = 'no source in out/source.js -- run build.bat';
+
+// ---------------------------------------------------------------------------
 //  Start-pose presets
 // ---------------------------------------------------------------------------
 function buildPresets() {
   const wrap = $('presets');
   wrap.innerHTML = '';
-  const list = readJSON(KEY.presets(routine), []);
+  const list = readSaved('presets', routine, []);
   if (!list.length) { wrap.innerHTML = '<div class="hint">no saved placements yet</div>'; return; }
   list.forEach((p, i) => {
     const chip = document.createElement('span');
     chip.className = 'chip';
-    chip.innerHTML = `<span class="nm" title="${p.x.toFixed(1)}, ${p.y.toFixed(1)} @ ${p.h.toFixed(0)}°">${p.name}</span><span class="del">×</span>`;
+    chip.innerHTML = `<span class="nm" title="${p.x.toFixed(1)}, ${p.y.toFixed(1)} @ ${p.h.toFixed(0)}°">${esc(p.name)}</span><span class="del">×</span>`;
     chip.querySelector('.nm').onclick = () => {
       start = { x: p.x, y: p.y, h: p.h };
-      writeJSON(KEY.start(routine), start);
+      writeJSON(key('start', routine), start);
       syncStartInputs(); runSim(false); draw();
     };
     chip.querySelector('.del').onclick = () => {
-      list.splice(i, 1); writeJSON(KEY.presets(routine), list); buildPresets();
+      list.splice(i, 1); writeJSON(key('presets', routine), list); buildPresets();
     };
     wrap.appendChild(chip);
   });
@@ -253,11 +432,45 @@ function buildPresets() {
 $('btn-remember').onclick = () => {
   const name = (prompt('Name this placement (e.g. "red left, 3 tiles from mat")', '') || '').trim();
   if (!name) return;
-  const list = readJSON(KEY.presets(routine), []);
+  const list = readSaved('presets', routine, []);
   list.push({ name, x: start.x, y: start.y, h: start.h });
-  writeJSON(KEY.presets(routine), list);
+  writeJSON(key('presets', routine), list);
   buildPresets();
 };
+
+// ---------------------------------------------------------------------------
+//  A link to exactly this view: routine, placement, time, code panel. Send it
+//  to a teammate and they see the same thing -- nothing is uploaded anywhere,
+//  it is all in the address.
+// ---------------------------------------------------------------------------
+function viewLink() {
+  const q = new URLSearchParams({
+    routine, x: start.x.toFixed(1), y: start.y.toFixed(1), h: start.h.toFixed(1),
+    t: (timeMs / 1000).toFixed(2),
+  });
+  if (codeOpen) q.set('code', codeFile || '1');
+  return location.href.split('#')[0] + '#' + q.toString();
+}
+$('btn-link').onclick = async () => {
+  const url = viewLink();
+  try { await navigator.clipboard.writeText(url); setStatus('link to this view copied', false); }
+  catch (e) { prompt('Copy this link:', url); }
+};
+function applyLink() {
+  if (!location.hash) return false;
+  const q = new URLSearchParams(location.hash.slice(1));
+  const r = q.get('routine');
+  if (!r || !LOGS[r]) return false;
+  sel.value = r;
+  selectRoutine(r);
+  const x = parseFloat(q.get('x')), y = parseFloat(q.get('y')), h = parseFloat(q.get('h'));
+  if (isFinite(x) && isFinite(y) && isFinite(h)) { start = { x, y, h }; syncStartInputs(); runSim(false); }
+  const t = parseFloat(q.get('t'));
+  if (isFinite(t)) timeMs = Math.min(t * 1000, sim.duration_ms);
+  const code = q.get('code');
+  if (code) { toggleCode(true); if (SOURCE[code]) renderCode(code); }
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 //  Pointer handling
@@ -340,8 +553,7 @@ canvas.addEventListener('mousemove', (e) => {
   draw();
 });
 
-// Re-simulating on every mouse move would fight the frame rate on the longer
-// routines, so a drag coalesces into at most one run per animation frame.
+// A drag coalesces into at most one re-simulation per animation frame.
 let simQueued = false;
 function queueSim() {
   syncStartInputs();
@@ -355,7 +567,7 @@ window.addEventListener('mouseup', () => {
     if (Math.hypot(pending.to.x - pending.from.x, pending.to.y - pending.from.y) > 0.5) measures.push(pending);
     pending = null; $('measure-count').textContent = measures.length || 'none';
   }
-  if (drag && drag.kind.startsWith('start')) { writeJSON(KEY.start(routine), start); runSim(false); }
+  if (drag && drag.kind.startsWith('start')) { writeJSON(key('start', routine), start); runSim(false); }
   panning = null; drag = null; draw();
 });
 canvas.addEventListener('mouseleave', () => { mouse.inside = false; draw(); });
@@ -382,12 +594,12 @@ canvas.addEventListener('wheel', (e) => {
 function syncStartInputs() {
   $('in-x').value = start.x.toFixed(1); $('in-y').value = start.y.toFixed(1); $('in-h').value = start.h.toFixed(1);
 }
-for (const [id, key] of [['in-x', 'x'], ['in-y', 'y'], ['in-h', 'h']]) {
+for (const [id, k] of [['in-x', 'x'], ['in-y', 'y'], ['in-h', 'h']]) {
   $(id).addEventListener('change', (e) => {
     const v = parseFloat(e.target.value);
     if (!isFinite(v)) return;
-    start[key] = key === 'h' ? ((v % 360) + 360) % 360 : v;
-    writeJSON(KEY.start(routine), start);
+    start[k] = k === 'h' ? ((v % 360) + 360) % 360 : v;
+    writeJSON(key('start', routine), start);
     runSim(false); draw();
   });
 }
@@ -395,6 +607,10 @@ for (const [id, key] of [['in-x', 'x'], ['in-y', 'y'], ['in-h', 'h']]) {
 // ---------------------------------------------------------------------------
 //  Drawing
 // ---------------------------------------------------------------------------
+// Motors worth labelling on the path: the ones the profile's intake rules name.
+const INTAKE_MOTORS = new Set([...Object.keys(ROBOT.intake.collect_when || {}),
+                               ...Object.keys(ROBOT.intake.eject_when || {})]);
+
 function drawPaths() {
   if (!sim) return;
   const dpr = window.devicePixelRatio || 1;
@@ -428,8 +644,7 @@ function drawPaths() {
     seg(0, iNow, 'rgba(47,111,176,0.95)', 2.5);
     ctx.restore();
 
-    // the leading edge, while the path is still drawing itself
-    if (reveal < 1) {
+    if (reveal < 1) {                              // the leading edge while drawing
       const p = sim.ticks[revealTicks - 1], s = toScreen(p.x, p.y);
       ctx.save();
       ctx.fillStyle = '#2f6fb0'; ctx.beginPath(); ctx.arc(s.x, s.y, 4.5, 0, Math.PI * 2); ctx.fill();
@@ -439,8 +654,7 @@ function drawPaths() {
     }
   }
 
-  // contact markers
-  ctx.save();
+  ctx.save();                                      // contact markers
   for (const c of sim.contacts) {
     const i = Math.min(revealTicks - 1, Math.round(c.t / ROBOT.sim.tick_ms));
     if (i * ROBOT.sim.tick_ms < c.t - 1) continue;
@@ -459,7 +673,7 @@ function drawPaths() {
       const a = ev.action;
       let label = null, color = null;
       if (a.type === 'pneumatic') { label = `${a.name} ${a.state ? 'on' : 'off'}`; color = a.state ? '#c8721a' : '#8a8f96'; }
-      if (a.type === 'motor' && a.name === 'intake') { label = a.action === 'stop' ? 'intake stop' : 'intake'; color = '#2a9d5c'; }
+      if (a.type === 'motor' && INTAKE_MOTORS.has(a.name)) { label = a.action === 'stop' ? `${a.name} stop` : a.name; color = '#2a9d5c'; }
       if (!label) continue;
       const s = toScreen(ev.x, ev.y);
       ctx.fillStyle = color; ctx.beginPath(); ctx.arc(s.x, s.y, 3, 0, Math.PI * 2); ctx.fill();
@@ -584,8 +798,7 @@ function draw() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = css.getPropertyValue('--stage').trim(); ctx.fillRect(0, 0, W, H);
 
-  // Blocks the capture zone has already swept are drawn out: they are inside
-  // the robot, and leaving them on the floor under the chassis looks wrong.
+  // Blocks the capture zone has already swept are inside the robot.
   const iNow = sim ? Math.min(sim.ticks.length - 1, Math.round(timeMs / ROBOT.sim.tick_ms)) : 0;
   const swept = new Set();
   if (sim) for (const p of sim.pickups) if (p.tick <= iNow) swept.add(p.id);
@@ -599,8 +812,6 @@ function draw() {
   drawPaths();
 
   if (sim) {
-    // The capture zone, kept deliberately faint: it shows where the robot is
-    // TRYING to collect. Claiming more than that would be a guess.
     const now = sim.ticks[iNow];
     const poly = (pts, fill, stroke) => {
       ctx.save();
@@ -609,14 +820,12 @@ function draw() {
       ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke();
       ctx.restore();
     };
-    // The plate, while matchload is out: a low tongue that reaches under a
-    // loader tube. Drawn under the wedge so the two read as one mechanism.
+    // The plate while deployed, then the capture zone -- kept deliberately
+    // faint: it shows where the robot is TRYING to collect, nothing more.
     if (now && now.pl)
-      poly(plateZone(now, ROBOT).map(q => toScreen(q.x, q.y)),
-           'rgba(120,132,148,0.22)', 'rgba(90,102,118,0.45)');
+      poly(plateZone(now, ROBOT).map(q => toScreen(q.x, q.y)), 'rgba(120,132,148,0.22)', 'rgba(90,102,118,0.45)');
     if (now && now.ik === 1)
-      poly(intakeWedge(now, ROBOT).map(q => toScreen(q.x, q.y)),
-           'rgba(42,157,92,0.12)', 'rgba(42,157,92,0.34)');
+      poly(intakeWedge(now, ROBOT).map(q => toScreen(q.x, q.y)), 'rgba(42,157,92,0.12)', 'rgba(42,157,92,0.34)');
     $('carried').textContent = sim.carried[iNow] + ' / ' + sim.capacity;
 
     drawRobot({ ...start }, { alpha: 0.35, fill: 'rgba(47,111,176,0.25)', stroke: '#2f6fb0', front: '#2f6fb0' });
@@ -627,6 +836,7 @@ function draw() {
                    front: touching ? '#d9283c' : '#2f6fb0', outline: touching ? 3 : 1.5 });
     $('time-readout').textContent = `${(timeMs / 1000).toFixed(2)} s   x ${p.x.toFixed(1)}  y ${p.y.toFixed(1)}  h ${(((p.h % 360) + 360) % 360).toFixed(1)}°`;
     $('timeline').value = timeMs;
+    followCode();
   }
 
   drawEdgeRulers(); drawRuler();
@@ -662,9 +872,9 @@ $('btn-play').onclick = () => {
   if (timeMs >= sim.duration_ms) timeMs = 0;
   playing = !playing; $('btn-play').textContent = playing ? 'Pause' : 'Play';
 };
-$('btn-restart').onclick = () => { timeMs = 0; playing = false; $('btn-play').textContent = 'Play'; draw(); };
+$('btn-restart').onclick = () => jumpTo(0);
 $('btn-replay').onclick = () => { runSim(true); draw(); };
-$('timeline').addEventListener('input', (e) => { timeMs = parseFloat(e.target.value); playing = false; $('btn-play').textContent = 'Play'; draw(); });
+$('timeline').addEventListener('input', (e) => jumpTo(parseFloat(e.target.value)));
 
 // ---------------------------------------------------------------------------
 //  Controls
@@ -674,7 +884,7 @@ for (const name of Object.keys(LOGS)) { const o = document.createElement('option
 sel.onchange = (e) => selectRoutine(e.target.value);
 
 $('btn-fit').onclick = fitView;
-$('btn-default-start').onclick = () => { start = { ...DEFAULT_START }; writeJSON(KEY.start(routine), start); syncStartInputs(); runSim(false); draw(); };
+$('btn-default-start').onclick = () => { start = { ...DEFAULT_START }; writeJSON(key('start', routine), start); syncStartInputs(); runSim(false); draw(); };
 $('btn-ruler').onclick = (e) => { ruler.on = !ruler.on; e.target.classList.toggle('active', ruler.on); if (!ruler.on) $('ruler-readout').textContent = 'off'; draw(); };
 $('btn-clear').onclick = () => { measures.length = 0; $('measure-count').textContent = 'none'; draw(); };
 $('btn-theme').onclick = (e) => {
@@ -690,29 +900,37 @@ const MODEL_SLIDERS = [['sl-load', 'load_factor', v => v.toFixed(2)],
                        ['sl-tau', 'tau_s', v => v.toFixed(2) + ' s'],
                        ['sl-dead', 'v_dead', v => v.toFixed(2) + ' V']];
 function syncModelSliders() {
-  for (const [id, key, fmt] of MODEL_SLIDERS) { $(id).value = ROBOT.sim[key]; $(id + '-v').textContent = fmt(ROBOT.sim[key]); }
+  for (const [id, k, fmt] of MODEL_SLIDERS) { $(id).value = ROBOT.sim[k]; $(id + '-v').textContent = fmt(ROBOT.sim[k]); }
 }
-for (const [id, key, fmt] of MODEL_SLIDERS) {
-  const el = $(id), out = $(id + '-v');
-  el.value = ROBOT.sim[key]; out.textContent = fmt(ROBOT.sim[key]);
-  el.addEventListener('input', (e) => {
-    ROBOT.sim[key] = parseFloat(e.target.value); out.textContent = fmt(ROBOT.sim[key]);
-    writeJSON(MODEL_KEY, { load_factor: ROBOT.sim.load_factor, tau_s: ROBOT.sim.tau_s, v_dead: ROBOT.sim.v_dead });
+for (const [id, k, fmt] of MODEL_SLIDERS) {
+  $(id).addEventListener('input', (e) => {
+    ROBOT.sim[k] = parseFloat(e.target.value); $(id + '-v').textContent = fmt(ROBOT.sim[k]);
+    writeJSON(key('model'), { load_factor: ROBOT.sim.load_factor, tau_s: ROBOT.sim.tau_s, v_dead: ROBOT.sim.v_dead });
     runSim(false); draw();
   });
 }
-
-document.getElementById('storage').textContent = storageWorks() ? 'kept across F5' : 'blocked by browser';
-
+syncModelSliders();
 $('btn-reset-model').onclick = () => {
   Object.assign(ROBOT.sim, MODEL_DEFAULTS);
-  writeJSON(MODEL_KEY, MODEL_DEFAULTS);
+  writeJSON(key('model'), MODEL_DEFAULTS);
   syncModelSliders(); runSim(false); draw();
 };
 
+$('storage').textContent = storageWorks() ? 'kept across F5' : 'blocked by browser';
+$('team-line').textContent = `Team ${TEAM} · Push Back 2025-26` +
+  (BUILD ? ` · compiled ${BUILD.built.slice(5, 16)}` : '');
+if (BUILD) $('team-line').title = `built from ${BUILD.project} at ${BUILD.built}`;
+
 window.addEventListener('resize', resize);
 setTheme('light');
-if (routine) { sel.value = routine; selectRoutine(routine); }
-else { setStatus('no logs found — run build.bat first', false); }
+const names = Object.keys(LOGS);
+if (!names.length) {
+  setStatus('no logs found — run build.bat first', false);
+} else if (!applyLink()) {
+  const last = readRaw(key('last'));
+  routine = LOGS[last] ? last : names[0];
+  sel.value = routine;
+  selectRoutine(routine);
+}
 resize();
 requestAnimationFrame(frame);

@@ -129,7 +129,9 @@ function stepChassis(st, vL, vR, R, world) {
   return contact;
 }
 
-function brake(st) { st.sL = 0; st.sR = 0; }        // DriveL.stop(hold) / DriveR.stop(hold)
+// DriveL.stop(hold) / DriveR.stop(hold): the wheels stop, and any open-loop
+// voltage command from drive_with_voltage() ends with them.
+function brake(st) { st.sL = 0; st.sR = 0; st.vL = 0; st.vR = 0; }
 
 const HANG_LIMIT_MS = 30000;                        // a timeout of 0 would loop forever
 
@@ -207,12 +209,75 @@ function runTurn(st, a, R, ticks, moveIdx, world) {             // drive.cpp:140
   };
 }
 
-function runWait(st, ms, ticks, moveIdx) {
-  const n = Math.round(ms / ROBOT.sim.tick_ms);
+// Swings: one side drives, the other holds -- a turn about one wheel.
+// Transcribed from drive.cpp with its quirk intact: the output is clamped by
+// turn_max_voltage (recorded as clamp_v), never by the swing's own
+// swing_max_voltage parameter.
+function runSwing(st, a, R, ticks, moveIdx, world) {              // drive.cpp:232-278
+  const target = a.heading_deg + st.hOff;
+  const pid = new PID(wrap180(target - st.h), a.swing_kp, a.swing_ki, a.swing_kd,
+                      a.swing_starti, a.settle_error, a.settle_time, a.timeout);
+  const t0 = st.t;
+  let hung = false, contact = null;
+
+  while (!pid.is_settled()) {
+    const out = clamp(pid.compute(wrap180(target - st.h)), -a.clamp_v, a.clamp_v);
+    // left:  DriveL.spin(fwd, out)      and DriveR holds
+    // right: DriveR.spin(reverse, out)  and DriveL holds
+    const vL = a.side === 'left' ? out : 0;
+    const vR = a.side === 'left' ? 0 : -out;
+    contact = noteContact(contact, stepChassis(st, vL, vR, R, world), st.t);
+    ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik, pl: st.plate });
+    if (st.t - t0 >= HANG_LIMIT_MS) { hung = true; break; }
+  }
+  brake(st);
+
+  return {
+    type: 'swing', side: a.side, i: a.i, ms: st.t - t0,
+    headingAsked: a.heading_deg, headingEnd: st.h - st.hOff,
+    headingGap: wrap180(target - st.h),
+    exit: hung ? 'hung' : pid.exitReason(), timeout: a.timeout, contact,
+  };
+}
+
+// A wait. The robot normally sits still -- unless drive_with_voltage() left
+// the drive pushing, in which case it keeps pushing through the wait, which is
+// how routines commonly drive into a wall for a set time.
+function runWait(st, ms, R, ticks, moveIdx, world) {
+  const n = Math.round(ms / R.sim.tick_ms);
+  let contact = null;
   for (let i = 0; i < n; i++) {
-    st.t += ROBOT.sim.tick_ms;
+    if (st.vL || st.vR || st.sL || st.sR)
+      contact = noteContact(contact, stepChassis(st, st.vL, st.vR, R, world), st.t);
+    else
+      st.t += R.sim.tick_ms;
     ticks.push({ t: st.t, x: st.x, y: st.y, h: st.h, move: moveIdx, ik: st.ik, pl: st.plate });
   }
+  return contact;
+}
+
+// ---------------------------------------------------------------------------
+//  The intake's state, from the team's OWN device names.
+//
+//  Which motor combination means "collecting" and which means "ejecting"
+//  differs from robot to robot, so it is not written here: it comes from the
+//  team's robot profile, e.g. for us
+//      collect_when: { intake: "reverse", shooter: "stop" }
+//      eject_when:   { intake: "reverse", shooter: "fwd" }
+//  Each motor must be in the listed state; "spin" means either direction.
+// ---------------------------------------------------------------------------
+function ruleMatches(rule, motors) {
+  const keys = rule ? Object.keys(rule) : [];
+  if (!keys.length) return false;
+  return keys.every(k => {
+    const want = rule[k], have = motors[k] || 'stop';
+    return want === 'spin' ? have !== 'stop' : have === want;
+  });
+}
+function intakeMode(R, motors) {
+  if (ruleMatches(R.intake.eject_when, motors))   return 2;
+  if (ruleMatches(R.intake.collect_when, motors)) return 1;
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -222,11 +287,12 @@ function runWait(st, ms, ticks, moveIdx) {
 // ---------------------------------------------------------------------------
 function intentPath(log, start) {
   const pts = [{ x: start.x, y: start.y, h: start.h }];
-  let x = start.x, y = start.y, h = start.h;
+  let x = start.x, y = start.y, h = start.h, hOff = start.h;
   for (const a of log.actions) {
-    if (a.type === 'turn') { h = a.heading_deg + start.h; pts.push({ x, y, h }); }
+    if (a.type === 'set_heading' || a.type === 'set_coordinates') hOff = h - a.heading_deg;
+    if (a.type === 'turn' || a.type === 'swing') { h = a.heading_deg + hOff; pts.push({ x, y, h }); }
     if (a.type === 'drive') {
-      h = a.heading_deg + start.h;
+      h = a.heading_deg + hOff;
       const r = h * Math.PI / 180;
       x += a.distance_in * Math.sin(r);
       y += a.distance_in * Math.cos(r);
@@ -244,59 +310,90 @@ function intentPath(log, start) {
 //               (the descore hook entering the goal's top slot), so those
 //               moves ignore long-goal collision
 //
-//  Returns { ticks, moves, events, intent, duration_ms, contacts, abort }
-//  Poses in `ticks` are already field coordinates.
+//  Returns { ticks, moves, events, spans, intent, duration_ms, contacts, abort,
+//            pickups, releases, carried, capacity, vmax_in_s, overran }
+//  Poses in `ticks` are already field coordinates. `spans` records, for every
+//  action, when it started and ended and which line of code made it -- which
+//  is what links the timeline to the code panel.
 // ---------------------------------------------------------------------------
-function simulate(log, R, start, opts) {
+function simulate(log, R0, start, opts) {
   opts = opts || {};
   const hooks = opts.hooks || new Set();
   const obstacles = buildObstacles();
 
+  // Free speed comes from the team's own code where it can: cartridge rpm x
+  // wheel ratio x wheel circumference, all read from the Drive constructor in
+  // their main.cpp. Only if the log lacks them does robot.js's figure stand.
+  const g = log.geometry || {};
+  const vmax = (g.cartridge_rpm > 0 && g.wheel_ratio > 0 && g.wheel_diameter_in > 0)
+    ? g.cartridge_rpm * g.wheel_ratio * Math.PI * g.wheel_diameter_in / 60
+    : R0.sim.vmax_in_s;
+  const R = { ...R0, sim: { ...R0.sim, vmax_in_s: vmax } };
+
   const st = { x: start.x, y: start.y, h: start.h, hOff: start.h,
-               sL: 0, sR: 0, encL: 0, encR: 0, t: 0,
-               ik: 0, intakeOn: false, shooterOn: false, plate: false };
+               sL: 0, sR: 0, vL: 0, vR: 0, encL: 0, encR: 0, t: 0,
+               ik: 0, motors: {}, plate: false };
   const ticks = [{ t: 0, x: st.x, y: st.y, h: st.h, move: -1, ik: 0, pl: false }];
-  const moves = [], events = [], contacts = [];
+  const moves = [], events = [], contacts = [], spans = [];
   let abort = null;
 
   for (const a of log.actions) {
-    const idx = moves.length;
-    const world = {
-      obstacles,
-      skip: hooks.has(a.i) ? new Set(['longgoal']) : null,
-    };
+    const idx = moves.length, t0 = st.t;
+    const world = { obstacles, skip: hooks.has(a.i) ? new Set(['longgoal']) : null };
 
-    let m = null;
+    let m = null, waitContact = null;
     switch (a.type) {
       case 'drive': m = runDrive(st, a, R, ticks, idx, world); moves.push(m); break;
       case 'turn':  m = runTurn (st, a, R, ticks, idx, world); moves.push(m); break;
-      case 'wait':  runWait(st, a.ms, ticks, idx - 1); break;
+      case 'swing': m = runSwing(st, a, R, ticks, idx, world); moves.push(m); break;
+      case 'wait':  waitContact = runWait(st, a.ms, R, ticks, idx - 1, world); break;
+
+      case 'voltage':                       // drive_with_voltage(): keeps pushing
+        st.vL = a.left_v; st.vR = a.right_v;
+        break;
+
+      case 'set_heading':
+      case 'set_coordinates':
+        // Re-zeroing the gyro: from here on, the code's headings are measured
+        // from wherever the robot is now pointing, which reads as heading_deg.
+        st.hOff = st.h - a.heading_deg;
+        break;
+
+      case 'drive_to_point':
+      case 'turn_to_point':
+        // These steer by odometry, which is not simulated. Past this point the
+        // robot's position would be a guess, so the path ends here and says so.
+        abort = { move: a.i, name: a.type, t: st.t, reason: 'unsimulated', line: a.line, file: a.file };
+        break;
+
       case 'motor':
-        // intake running with the shooter stopped is intake_hold -- collecting.
-        // intake plus shooter forward is intake_high -- ejecting out of the top.
-        // The distinction is not asserted here; it comes straight out of
-        // autofunction.cpp, which is the user's own code and is compiled.
-        if (a.name === 'intake')  st.intakeOn  = a.action !== 'stop';
-        if (a.name === 'shooter') st.shooterOn = a.action !== 'stop';
-        st.ik = !st.intakeOn ? 0 : (st.shooterOn ? 2 : 1);
+        // The intake's mode comes from the team's own motor names and the
+        // rules in their robot profile -- see intakeMode() above.
+        st.motors[a.name] = a.action === 'stop' ? 'stop' : (a.dir === 'reverse' ? 'reverse' : 'fwd');
+        st.ik = intakeMode(R, st.motors);
         events.push({ tick: ticks.length - 1, x: st.x, y: st.y, action: a });
         break;
+
       case 'pneumatic':
-        // matchload is the intake plate: deployed, it slides under a loader
-        // tube so the intake can draw the stack down. Nothing is inferred here
-        // -- the routine says when it goes out and comes back in.
-        if (a.name === 'matchload') st.plate = !!a.state;
+        // The plate is whichever pneumatic the profile names (for us,
+        // matchload). The routine says when it goes out and comes back in.
+        if (a.name === R.plate.pneumatic) st.plate = !!a.state;
         events.push({ tick: ticks.length - 1, x: st.x, y: st.y, action: a });
         break;
+
       default: break;                       // config / exit records move nothing
     }
 
-    if (m && m.contact) {
-      contacts.push({ ...m.contact, move: a.i, type: m.type });
-      if (m.contact.unpredictable) {
+    spans.push({ i: a.i, type: a.type, file: a.file, line: a.line, t0, t1: st.t });
+    if (abort) break;
+
+    const c = (m && m.contact) || waitContact;
+    if (c) {
+      contacts.push({ ...c, move: a.i, type: m ? m.type : 'wait' });
+      if (c.unpredictable) {
         // An oblique or corner impact makes everything after it a guess.
         // Better to stop and say so than to draw a confident wrong path.
-        abort = { move: a.i, name: m.contact.name, t: m.contact.t };
+        abort = { move: a.i, name: c.name, t: c.t, reason: 'contact' };
         break;
       }
     }
@@ -304,7 +401,8 @@ function simulate(log, R, start, opts) {
 
   const intake = computeIntake(ticks, R);
 
-  return { ticks, moves, events, contacts, abort, ...intake,
+  return { ticks, moves, events, spans, contacts, abort, ...intake,
+           vmax_in_s: vmax, overran: !!log.overran,
            intent: intentPath(log, start), duration_ms: st.t };
 }
 

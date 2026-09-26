@@ -96,7 +96,48 @@
   .hook.on { background: var(--accent); color: #fff; }
 
   #stage { flex: 1; min-width: 0; position: relative; display: flex; flex-direction: column; }
-  #field { flex: 1; width: 100%; display: block; cursor: crosshair; }
+  #view-row { flex: 1; min-height: 0; display: flex; }
+  #field { flex: 1; min-width: 0; display: block; cursor: crosshair; }
+
+  /* the code panel */
+  #code { width: 460px; flex: 0 0 460px; display: flex; flex-direction: column;
+    background: var(--panel); border-left: 1px solid var(--line); min-height: 0; }
+  #code.hidden { display: none; }
+  .code-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px;
+    border-bottom: 1px solid var(--line); }
+  #code-tabs { flex: 1; display: flex; gap: 4px; overflow-x: auto; }
+  #code-tabs button, #btn-code-close { flex: 0 0 auto; padding: 4px 9px; font: 11.5px "JetBrains Mono", ui-monospace, monospace; }
+  #code-tabs button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  #code-body { flex: 1; overflow: auto; font: 12px/1.6 "JetBrains Mono", ui-monospace, Consolas, monospace;
+    background: var(--gutter); padding: 6px 0; }
+  .cl { display: flex; white-space: pre; padding-right: 12px; }
+  .cl .ln { flex: 0 0 38px; text-align: right; padding-right: 8px; color: var(--hair); user-select: none; }
+  .cl .gm { flex: 0 0 12px; position: relative; }
+  .cl.act { cursor: pointer; }
+  .cl.act .gm::after { content: ''; position: absolute; left: 3px; top: 50%; width: 5px; height: 5px;
+    margin-top: -2.5px; border-radius: 50%; background: var(--hair); }
+  .cl.mv .gm::after { background: var(--accent); width: 6px; height: 6px; margin-top: -3px; }
+  .cl.act:hover { background: var(--accent-soft); }
+  .cl.hot { background: #fff4c2; }
+  :root[data-theme="dark"] .cl.hot { background: #3a3410; }
+  .cl.hot .ln { color: var(--text); font-weight: 500; }
+  .lc .cm { color: #7c8a99; font-style: italic; }
+  .lc .st { color: #a3521b; }
+  .lc .nu { color: #1f6fb0; }
+  .lc .kw { color: #8a3fb0; font-weight: 500; }
+  .lc .fn { color: #1f7a5a; }
+  .lc .pp { color: #8a6d1f; }
+  :root[data-theme="dark"] .lc .st { color: #e3a26a; }
+  :root[data-theme="dark"] .lc .nu { color: #7fb7ec; }
+  :root[data-theme="dark"] .lc .kw { color: #c79bf0; }
+  :root[data-theme="dark"] .lc .fn { color: #6fd0a6; }
+  .code-foot { padding: 6px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
+
+  a.lnk { color: var(--accent); cursor: pointer; text-decoration: none;
+    font-family: "JetBrains Mono", ui-monospace, monospace; }
+  a.lnk:hover { text-decoration: underline; }
+  .warn code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 11px; }
+  .table-wrap { overflow-x: auto; margin: 0 -4px; padding: 0 4px; }
   #bar { height: 44px; background: var(--panel); border-top: 1px solid var(--line);
     display: flex; align-items: center; gap: 10px; padding: 0 14px; }
   #bar button, #bar select { flex: 0 0 auto; }
@@ -112,7 +153,7 @@
   <aside id="side">
     <div class="head">
       <h1>VEX Auton Visualizer</h1>
-      <p>Team 117V · Push Back 2025-26</p>
+      <p id="team-line">Push Back 2025-26</p>
     </div>
     <div class="body">
 
@@ -152,11 +193,11 @@
       <label class="chk"><input id="chk-events" type="checkbox" checked> pneumatic / intake events</label>
 
       <h2>Moves — asked vs achieved</h2>
-      <table>
-        <thead><tr><th>#</th><th>type</th><th>asked</th><th>got</th><th>gap</th><th>ms</th><th>exit</th><th>hit</th><th>⌐</th></tr></thead>
+      <div class="table-wrap"><table>
+        <thead><tr><th>line</th><th>type</th><th>asked</th><th>got</th><th>gap</th><th>ms</th><th>exit</th><th>hit</th><th>⌐</th></tr></thead>
         <tbody id="moves"></tbody>
-      </table>
-      <div class="hint" style="margin-top:6px">click a row to jump the timeline · gap &gt; 2 highlighted</div>
+      </table></div>
+      <div class="hint" style="margin-top:6px">click a row to jump the timeline · click a line number to see the code · gap &gt; 2 highlighted</div>
       <div class="hint"><b>⌐</b> marks a move as an intended hook engagement, so the goal is not treated as a wall</div>
 
       <h2>Drivetrain model</h2>
@@ -178,6 +219,7 @@
 
       <h2>View</h2>
       <div class="row"><button id="btn-fit">Fit</button><button id="btn-theme">Dark</button></div>
+      <div class="row" style="margin-top:6px"><button id="btn-link">Copy link to this view</button></div>
       <div class="kv" style="margin-top:6px"><span>zoom</span><span id="zoom">—</span></div>
       <div class="kv"><span>cursor (in)</span><span id="cursor-in">—</span></div>
       <div class="kv"><span>cursor (tile)</span><span id="cursor-tile">—</span></div>
@@ -187,8 +229,19 @@
   </aside>
 
   <main id="stage">
-    <canvas id="field"></canvas>
+    <div id="view-row">
+      <canvas id="field"></canvas>
+      <aside id="code" class="hidden">
+        <div class="code-head">
+          <div id="code-tabs"></div>
+          <button id="btn-code-close" title="close">×</button>
+        </div>
+        <div id="code-body"></div>
+        <div class="code-foot">read-only · the highlighted line is running now · click a dotted line to jump there</div>
+      </aside>
+    </div>
     <div id="bar">
+      <button id="btn-code" title="show the code">&lt;/&gt; Code</button>
       <button id="btn-restart">⟲</button>
       <button id="btn-play">Play</button>
       <select id="speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
@@ -200,6 +253,8 @@
 </div>
 
 <script src="../out/logs.js"></script>
+<script src="../out/source.js"></script>
+<script src="../out/profile.js"></script>
 <script src="robot.js"></script>
 <script src="field.js"></script>
 <script src="collide.js"></script>

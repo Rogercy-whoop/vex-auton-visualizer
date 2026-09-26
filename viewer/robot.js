@@ -1,88 +1,102 @@
 // ============================================================================
-//  viewer/robot.js  --  everything about THIS robot that the code cannot know
+//  viewer/robot.js  --  what the simulator knows about the robot that the code
+//                       does not say
 // ----------------------------------------------------------------------------
-//  Loaded as a script (not fetched) so the page works from file://.
-//  This file is the single source of truth for robot geometry and for the
-//  three physical constants the simulation needs. Edit numbers here; nothing
-//  needs recompiling.
+//  Most of what the simulator needs comes from the team's own code: PID gains,
+//  timeouts, the wheel size, the gearing, the motor cartridge. What code cannot
+//  say -- how big the robot is, how its intake is shaped, which motor
+//  combination means "collecting" -- comes from the team's ROBOT PROFILE
+//  (profiles/*.json), which the build hands to the viewer as out/profile.js.
+//
+//  The values below are the defaults, and are our robot's (117V). Any field a
+//  profile supplies replaces the one here.
 // ============================================================================
 window.ROBOT = {
 
-  // ---- footprint, inches. Measured estimate -- confirm with a ruler. -------
-  length_in: 15.0,          // along the driving direction
+  team: '117V',
+
+  // ---- footprint, inches ---------------------------------------------------
+  length_in: 15.0,          // along the driving direction, bumpers included
   width_in:  13.5,          // across
   track_in:  12.0,          // wheel centre to wheel centre (sets turn radius)
 
-  // The pose point is the midpoint between the drive wheels. For this chassis
-  // that is the geometric centre of the drive base; a non-zero value shifts it
-  // toward the front (+) or rear (-) along the length.
+  // The pose point is the midpoint between the drive wheels. A non-zero value
+  // shifts it toward the front (+) or rear (-) along the length.
   center_offset_in: 0,
 
-  // ---- intake capture zone, in front of the robot --------------------------
-  // A rectangle the width of the five rollers, plus a small wedge each side,
-  // reaching about one and a half blocks ahead. Shown while the intake runs.
+  // ---- intake ---------------------------------------------------------------
   intake: {
+    // Capture zone: a rectangle the width of the rollers, a small wedge each
+    // side, reaching about one and a half blocks ahead.
     width_in: 8.5,
     reach_in: 4.8,           // 1.5 x 3.23 in block
     side_deg: 15,
-    // Blocks the robot can hold at once.  [CALIBRATE]
-    //
-    // Must be at least 6 for lanyou to behave as it does on the field: it
-    // collects three from the middle of the field (autons.cpp:286), stops the
-    // intake without ejecting (:293), and only then drives to a loader and
-    // draws three more (:299-302). Nothing is ejected in between, so all six
-    // are aboard at once before intake_high fires at :309.
+
+    // Blocks held at once. At least 6 for us: lanyou collects three from the
+    // middle of the field (autons.cpp:286), stops the intake WITHOUT ejecting
+    // (:293), then draws three more from a loader (:299-302); nothing leaves
+    // until intake_high at :309.
     capacity: 6,
-    release_ms: 350,         // time to eject one block            [CALIBRATE]
+    release_ms: 350,         // time to eject one block
+
+    // Which motor states mean what, in the team's own device names. Each
+    // listed motor must be in that state: "fwd", "reverse", "stop", or "spin"
+    // for either direction. Ours come straight out of autofunction.cpp:
+    //   intake_hold() spins intake in reverse and stops shooter  -> collecting
+    //   intake_high() spins intake in reverse and shooter forward -> ejecting
+    collect_when: { intake: 'reverse', shooter: 'stop' },
+    eject_when:   { intake: 'reverse', shooter: 'fwd' },
   },
 
-  // ---- the pneumatic intake plate ------------------------------------------
-  // In the code this is `matchload`. It deploys forward and LOW, so it slides
-  // underneath a loader tube rather than hitting it. That is why it is
-  // deliberately NOT part of the collision footprint: collision uses the
-  // chassis rectangle above, which is what actually stops against the tube.
-  // Set `collides` true if your plate sits high enough to catch on things.
+  // ---- the intake plate -----------------------------------------------------
+  // Deploys forward and LOW, so it slides under a loader tube instead of
+  // hitting it -- which is why it is not part of the collision footprint.
   plate: {
-    reach_in: 5.0,           // how far it extends past the chassis
+    pneumatic: 'matchload',  // the digital_out that deploys it
+    reach_in: 5.0,
     collides: false,
-    // Time to draw one block down out of a loader, with the plate deployed and
-    // the intake running.  [CALIBRATE]
-    //
-    // Set from the routine itself rather than guessed: lanyou deploys the
-    // plate, drives into the loader, runs the intake and dwells 0.8 s
-    // (autons.cpp:299-302), and that is known to empty the lower three blocks
-    // and leave the upper three. 800 ms / 3 gives this number.
-    //
-    // In reality the rate moves with battery charge, air pressure and how the
-    // stack is sitting, so treat it as an estimate with a wide error bar. What
-    // it is good for is relative: "this dwell gets about three, that one about
-    // one", not "exactly three".
+    // Time to draw one block down out of a loader. Set from the routine, not
+    // guessed: lanyou's 0.8 s dwell at autons.cpp:302 takes the lower three
+    // blocks and leaves the upper three, so 800 / 3. The real rate moves with
+    // battery charge and air pressure; read it as "about three", not "three".
     loader_ms: 265,
   },
 
-  // ---- drivetrain model: the ONLY physics in the simulator -----------------
-  // Everything else in the control loop is copied from the template verbatim.
-  // These three numbers stand between commanded voltage and actual motion,
-  // and each is measurable on the real robot:
+  // ---- drivetrain model: the only physics in the simulator -----------------
+  // Everything else is transcribed from the template. These stand between
+  // commanded voltage and actual motion, and each is measurable.
   sim: {
-    // Free speed at 12 V. Derived, not guessed:
-    //   600 rpm cartridge x 0.75 gear ratio = 450 rpm at the wheel
-    //   450 / 60 x pi x 3.25 in = 76.6 in/s
+    // Free speed at 12 V -- used only if the log does not carry the chassis
+    // geometry. Normally it is DERIVED from the team's main.cpp:
+    //   cartridge rpm x wheel ratio x pi x wheel diameter / 60
+    //   ours: 600 x 0.75 x pi x 3.25 / 60 = 76.6 in/s
     vmax_in_s: 76.6,
-
-    // Fraction of free speed actually reached under load.  [CALIBRATE]
-    // 1.0 would mean a frictionless robot with weightless wheels.
-    load_factor: 0.75,
-
-    // Time constant of the speed response, seconds.  [CALIBRATE]
-    // How long the chassis takes to reach ~63% of a commanded speed change.
-    tau_s: 0.12,
-
-    // Volts below which the drivetrain does not move at all.  [CALIBRATE]
-    // Static friction plus motor dead band. This is what turns the pure-P
-    // drive loop's asymptotic approach into a real, finite steady-state error.
-    v_dead: 1.0,
-
+    load_factor: 0.75,       // fraction of free speed reached under load   [estimate]
+    tau_s: 0.12,             // speed response time constant, seconds       [estimate]
+    v_dead: 0.6,             // volts below which the drive does not move   [chosen]
+    //   0.6 is the largest value at which the template's turns can settle (with
+    //   turn kp = 0.47, a 2-degree error asks for only 0.94 V). They do settle on
+    //   the robot, so 1.0 was wrong. Chosen to match behaviour, not measured.
     tick_ms: 10,             // matches task::sleep(10) in drive.cpp
   },
 };
+
+// A team's profile, if the build supplied one, replaces the defaults field by
+// field. Nested groups (intake, plate, sim) are merged one level deep, so a
+// profile only has to state what differs.
+(function applyProfile(p) {
+  if (!p) return;
+  const R = window.ROBOT;
+  for (const k of Object.keys(p)) {
+    const v = p[k];
+    if (v && typeof v === 'object' && !Array.isArray(v) && R[k] && typeof R[k] === 'object') {
+      for (const kk of Object.keys(v)) {
+        // a rule object (collect_when / eject_when) is replaced whole, not merged:
+        // a team's rule should never inherit a motor name from ours
+        R[k][kk] = v[kk];
+      }
+    } else if (k !== 'robot') {
+      R[k] = v;
+    }
+  }
+})(window.VEXSIM_PROFILE);
