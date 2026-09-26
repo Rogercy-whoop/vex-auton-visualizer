@@ -8,7 +8,7 @@ Each entry is: what I found, how I found it, and why it matters.
 
 **Where these came from.** Entries 2, 6 and 7, and the disabled integral in 3,
 come from my own reading of the template before this project began. The
-steady-state argument in 3, the closed form in 5, and entries 8 and 12
+steady-state argument in 3, the closed form in 5, and entries 8, 12 and 13
 surfaced while building the simulator with an AI coding assistant. Entries 1,
 4, 9, 10 and 11 are design decisions made along the way.
 
@@ -250,6 +250,33 @@ the rate at about 265 ms per block.
 **Why it matters:** both numbers came from the program, not from guessing, and
 the simulator now reproduces `lanyou` as observed — three from the floor,
 three from the loader, peak six.
+
+---
+
+## 13. A swing turn ignores its own voltage limit
+
+In the template's swing functions (`drive.cpp`, `left_swing_to_angle` and
+`right_swing_to_angle`), the output is clamped like this:
+
+```cpp
+output = clamp(output, -turn_max_voltage, turn_max_voltage);
+```
+
+`turn_max_voltage` is the *member* set by `set_turn_constants()` — not the
+function's own `swing_max_voltage` parameter, which is accepted and never used.
+So `set_swing_constants(7, ...)` in `default_constants()` sets a 7 V limit that
+no swing ever sees; every swing runs at the turn limit, 12 V.
+
+**How I found it:** making the simulator work for other teams meant adding
+swings, and transcribing the template line by line put the two names side by
+side.
+
+**What it does, in simulation** — and this part depends on the uncalibrated
+drivetrain model, so read it as a direction, not a number: a 90° swing at the
+12 V limit it actually uses overshoots and runs out its timeout (1510 ms); at
+the 7 V limit the code *meant*, it settles in about 1040 ms. Our routines do not
+swing, so this has never affected us. A team whose routines do will find their
+swing voltage setting does nothing.
 
 ---
 

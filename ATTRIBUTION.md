@@ -15,17 +15,20 @@ which is which, file by file.
 For the simulator itself, what is mine is the direction: the problem it
 solves, the architecture (a mock hardware layer at the linker seam, with no
 C++ parsing), the requirements for each feature, all the robot-specific
-knowledge the model depends on, and the review and correction of every stage.
+knowledge the model depends on — the values in `profiles/117V.json` — and the
+review and correction of every stage. The screenshots in `docs/media/` from
+before 26 Sep 2026 are mine, taken during the build.
 
 ## Written with Claude (Anthropic's AI coding assistant), under my direction
 
 | Path | What it is |
 |---|---|
-| `mock/` | The mock VEX SDK and `Drive` class that the linker substitutes on a laptop |
+| `mock/` | The stand-ins for the VEX SDK and the template's `Drive` class |
 | `harness/` | The entry point that runs each routine and writes the action log |
+| `tools/`, `build.bat`, `watch.bat` | The build: staging, compiling, symbol-table discovery, packaging |
 | `viewer/` | The simulator (control-loop replay, collision, intake) and the Canvas viewer |
-| `build.bat`, `watch.bat` | Build and rebuild-on-save scripts |
-| `docs/FINDINGS.md`, `docs/architecture.svg`, `NOTES-future.md` | Drafted from our working sessions |
+| `profiles/TEMPLATE.json`, `profiles/README.md` | The blank profile and its guide |
+| `docs/`, `NOTES-future.md`, `README.md` | Drafted from our working sessions |
 
 I set the requirements, and reviewed and corrected each stage; the assistant
 wrote the code. Later commits carry a `Co-Authored-By` trailer. The earliest
