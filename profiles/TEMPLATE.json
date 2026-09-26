@@ -1,0 +1,32 @@
+{
+  "team": "YOUR TEAM NUMBER",
+  "robot": "a short description",
+
+  "length_in": 15.0,
+  "width_in": 15.0,
+  "track_in": 12.0,
+  "center_offset_in": 0,
+
+  "intake": {
+    "width_in": 8.0,
+    "reach_in": 4.8,
+    "side_deg": 15,
+    "capacity": 3,
+    "release_ms": 350,
+    "collect_when": { "intake": "fwd" },
+    "eject_when":   { "intake": "reverse" }
+  },
+
+  "plate": {
+    "pneumatic": "",
+    "reach_in": 5.0,
+    "collides": false,
+    "loader_ms": 265
+  },
+
+  "sim": {
+    "load_factor": 0.75,
+    "tau_s": 0.12,
+    "v_dead": 1.0
+  }
+}

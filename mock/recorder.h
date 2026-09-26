@@ -3,56 +3,55 @@
 //  mock/recorder.h  --  the action log
 // ----------------------------------------------------------------------------
 //  Every mock function that would have moved hardware calls record() instead.
-//  The result is a JSON file: an ordered list of what the autonomous routine
-//  ASKED the robot to do, with every parameter that was in effect at the
-//  moment of the call.
+//  The result is an ordered list of what the routine ASKED the robot to do,
+//  each entry carrying every parameter in force at that moment and the file
+//  and line of the call that made it.
 //
-//  Deliberate scope limit: this file records intent. It does NOT compute where
-//  the robot ends up. That is the viewer's job, because the starting pose is
-//  chosen in the browser and must be changeable without recompiling.
+//  Deliberate scope limit: this file records intent. It does NOT work out
+//  where the robot ends up. That is the viewer's job, because the start pose
+//  is chosen in the browser and must be changeable without recompiling.
 //
-//  JSON is written by hand rather than with a library, to keep the build to
-//  exactly "run g++" with no dependencies to install.
+//  JSON is written by hand rather than with a library, so the build stays
+//  "run g++" with nothing else to install.
 // ============================================================================
+#include <source_location>
 #include <string>
 #include <vector>
 
+namespace vex { class motor; }
+
 namespace sim {
 
-// A tiny JSON object builder. Usage:
-//   J().s("type","drive").n("distance_in", 17.7).b("reversed", true).str()
-// produces {"type":"drive","distance_in":17.7,"reversed":true}
+// A tiny JSON object builder:
+//   J().s("type","drive").n("distance_in", 17.7).str()
+//   -> {"type":"drive","distance_in":17.7}
 class J {
   std::string body;
   void comma();
 public:
-  J& s(const char* key, const std::string& value);  // string value
-  J& n(const char* key, double value);              // number value
-  J& b(const char* key, bool value);                // boolean value
+  J& s(const char* key, const std::string& value);  // string
+  J& n(const char* key, double value);              // number
+  J& b(const char* key, bool value);                // boolean
   std::string str() const;
 };
 
-void record(const std::string& json_object);
+// Appends one action, stamped with its index, the simulated time, and the
+// file and line that made the call.
+void record(const std::string& json_object, const std::source_location& at);
 
-// Builds one routine's complete log as a JSON string.
-std::string build_json(const std::string& routine_name);
-
-// Clears the action list and the simulated clock so that several routines can
-// be run back to back in one process without contaminating each other.
-void reset();
-
-size_t action_count();
-void write_log(const std::string& path, const std::string& routine_name);
-
-// Chassis geometry, captured from the Drive constructor so the viewer reads
-// the real numbers out of main.cpp rather than having them retyped.
-// Only what the code itself knows. Robot dimensions are not in the code, so
-// they live in viewer/robot.js and nowhere else.
+// What the code itself says about the chassis, captured by the Drive
+// constructor in the team's main.cpp. The drive motor is kept as a pointer and
+// read only when the log is written, by which time every global exists.
 struct Geometry {
   double wheel_diameter = 0;
   double wheel_ratio    = 0;
   double gyro_scale     = 0;
+  const vex::motor* drive_motor = nullptr;
 };
 extern Geometry geometry;
+
+std::string build_json(const std::string& routine_name, bool overran);
+void        reset();          // wipe the log and the clock between routines
+size_t      action_count();
 
 }  // namespace sim
