@@ -6,6 +6,12 @@ material I have to be able to defend out loud.
 
 Each entry is: what I found, how I found it, and why it matters.
 
+**Where these came from.** Entries 2, 6 and 7, and the disabled integral in 3,
+come from my own reading of the template before this project began. The
+steady-state argument in 3, the closed form in 5, and entries 8 and 12
+surfaced while building the simulator with an AI coding assistant. Entries 1,
+4, 9, 10 and 11 are design decisions made along the way.
+
 ---
 
 ## 1. The architecture: substitution at the linker, not a parser
@@ -218,6 +224,32 @@ A page opened with `file://` may not `fetch()` a local file, but it may load a
 `window.VEXSIM_LOGS = {...}` alongside the plain `.json`. That single
 constraint is why the tool needs no web server at all — double-clicking the
 HTML is enough.
+
+---
+
+## 12. The routine's own control flow fixes the robot's capacity
+
+I had assumed the robot holds three blocks, because `lanyou` opens with the
+comment "intake the middle three". Tracing the code says otherwise:
+
+```
+autons.cpp:286   intake_hold(100)     collect three from the middle of the field
+autons.cpp:293   intake_hold(0)       stop the intake -- WITHOUT ejecting
+autons.cpp:299   matchload.set(true)  deploy the plate
+autons.cpp:301   intake_hold(100)     draw three more out of a loader
+autons.cpp:309   intake_high(100)     only now eject
+```
+
+Nothing leaves the robot between :286 and :309, so six blocks are aboard at
+once. A physical property of the robot, read directly off the control flow.
+
+The same routine calibrates the loader rate. The 0.8 s dwell at :302 is known
+to take the lower three blocks of a tube and leave the upper three, which puts
+the rate at about 265 ms per block.
+
+**Why it matters:** both numbers came from the program, not from guessing, and
+the simulator now reproduces `lanyou` as observed — three from the floor,
+three from the loader, peak six.
 
 ---
 
