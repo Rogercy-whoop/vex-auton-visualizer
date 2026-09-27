@@ -14,7 +14,12 @@ No team writes any simulator code.
 | team | project | result |
 |---|---|---|
 | 117V | ours | the routines it was built around |
-| 11117V | sent as a folder, built with `-Package` (27 Sep 2026) | compiled unchanged; 4 routines simulated; profile provisional until their measurements arrive |
+| 11117V | sent as a folder, built with `-Package` (27 Sep 2026) | compiled unchanged; 4 routines simulated |
+| 116X-323 | sent as a folder, built with `-Package` (27 Sep 2026) | compiled unchanged; 3 routines simulated |
+| 3778W | sent as a folder, built with `-Package` (27 Sep 2026) | compiled unchanged; 3 routines simulated |
+
+That is every team in SFLS's robotics club. The three newer profiles are
+provisional until each team's robot measurements arrive.
 
 ---
 

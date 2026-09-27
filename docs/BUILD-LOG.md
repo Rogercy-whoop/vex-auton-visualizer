@@ -81,30 +81,43 @@ Start placements can be named and saved per routine.
 
 ---
 
-## 27 Sep — a second team's project
+## 27 Sep — every team in the club
 
-Team 11117V, another team in our club, sent their VEXcode project folder. It was
-built with `-Package`, so their code stays out of this repository.
+The other three teams in SFLS's robotics club, 11117V, 116X-323 and 3778W, sent
+their VEXcode project folders. Each was built with `-Package`, so their code
+stays out of this repository. Each team gets a folder of its own results that
+opens in a browser.
 
-- **It compiled and ran unchanged, first time.** No edits to their project and
-  none to the simulator. The symbol tables gave four routines (`test`, `zuo`,
-  `you0plus4`, `you0plus7`) and thirteen devices.
-- **A cross-check from their own code.** Two of their routines print their
+| team | routines found | result |
+|---|---|---|
+| 11117V | `test`, `zuo`, `you0plus4`, `you0plus7` | compiled and ran unchanged |
+| 116X-323 | `zuo`, `you0plus4`, `you0plus7` | compiled and ran unchanged |
+| 3778W | `zuo`, `you0plus4`, `you0plus7` | compiled and ran unchanged; routines shared with 11117V, on different ports |
+
+- **All three compiled and ran unchanged, first time.** No edits to their
+  projects and none to the simulator. Each gave thirteen devices from its
+  symbol table.
+- **The first drives that finish by arriving.** 116X-323 tuned their own
+  constants: a drive settle error of 0.6 in with the integral switched on,
+  where ours is 0 with the integral off. So some of their drives now end by
+  settling, not on the timeout. Until now that branch of `PID::is_settled()`
+  had only ever run on turns.
+- **A cross-check from their own code.** Two of 11117V's routines print their
   elapsed time with their own timer (`autons.cpp:98`, `:184`). In simulation
   they printed `14.4` and `12.2`, matching the recorder's 14400 ms and
   12200 ms. Their timer reads the simulated clock the stand-ins advance, so this
   confirms the clock is consistent, not that the times are physically right.
-- **What the profile was for.** Their `intake_hold()` spins the shooter
-  backwards at 10% while collecting, where ours stops it. So 117V's intake rule
-  would not have recognised it. Their profile says
+- **What the profile was for.** All three teams' `intake_hold()` spins the
+  shooter backwards at 10% while collecting, where ours stops it. So 117V's intake rule
+  would not have recognised it. Their profiles say
   `"collect_when": { "intake": "reverse", "shooter": "reverse" }` and the
   intake model picked it up. This is a difference in the robot, handled in data
   rather than code, which is the case the profile was designed for.
 - **A bug it caught.** The blank profile, `profiles/TEMPLATE.json`, still had
   the old dead band of 1.0 V, which makes every turn time out. It is now 0.6,
   matching the default.
-- **Still provisional:** their robot's dimensions and intake geometry, and each
-  routine's start placement, until 11117V supply them.
+- **Still provisional:** each team's robot dimensions and intake geometry, and
+  each routine's start placement, until the teams supply them.
 
 ---
 
