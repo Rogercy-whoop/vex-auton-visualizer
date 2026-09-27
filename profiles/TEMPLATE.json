@@ -27,6 +27,6 @@
   "sim": {
     "load_factor": 0.75,
     "tau_s": 0.12,
-    "v_dead": 1.0
+    "v_dead": 0.6
   }
 }

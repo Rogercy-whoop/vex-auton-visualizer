@@ -9,6 +9,13 @@ a short form describing the robot's size and intake.
 
 No team writes any simulator code.
 
+**Teams so far**
+
+| team | project | result |
+|---|---|---|
+| 117V | ours | the routines it was built around |
+| 11117V | sent as a folder, built with `-Package` (27 Sep 2026) | compiled unchanged; 4 routines simulated; profile provisional until their measurements arrive |
+
 ---
 
 ## What happens to a team's project
