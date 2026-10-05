@@ -18,8 +18,9 @@ No team writes any simulator code.
 | 116X-323 | sent as a folder, built with `-Package` (27 Sep 2026) | compiled unchanged; 3 routines simulated |
 | 3778W | sent as a folder, built with `-Package` (27 Sep 2026) | compiled unchanged; 3 routines simulated |
 
-That is every team in SFLS's robotics club. The three newer profiles are
-provisional until each team's robot measurements arrive.
+That is every team in SFLS's robotics club, and each has opened its own
+results. The three newer profiles are provisional until each team's robot
+measurements arrive.
 
 ---
 

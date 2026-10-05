@@ -8,7 +8,7 @@ It compiles a team's real, unmodified VEXcode project on a laptop, replays each 
 
 Built by VEX team **117V**, and designed so every team in our school's club can use it with their own robot and their own code.
 
-**Status (27 Sep 2026): running on every team in SFLS's robotics club.** All four teams' VEXcode projects, from **117V**, **11117V**, **116X-323** and **3778W**, compiled and ran unchanged, with no change to the simulator needed for any of them. Each team has its own results packaged for it. The three newer robot profiles are provisional until those teams supply their measurements. See the [build log](docs/BUILD-LOG.md#27-sep--every-team-in-the-club).
+**Status (Oct 2026): used by every team in SFLS's robotics club.** All four teams, **117V**, **11117V**, **116X-323** and **3778W**, have their VEXcode projects running in it and have opened their own results. Every project compiled and ran unchanged, with no change to the simulator needed for any of them. The three newer robot profiles are provisional until those teams supply their measurements. See the [build log](docs/BUILD-LOG.md#27-sep--every-team-in-the-club).
 
 ![The viewer: lanyou at the loader, with the code panel open on the line that is running](docs/media/viewer.png)
 

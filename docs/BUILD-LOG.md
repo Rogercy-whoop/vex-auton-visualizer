@@ -119,6 +119,16 @@ opens in a browser.
 - **Still provisional:** each team's robot dimensions and intake geometry, and
   each routine's start placement, until the teams supply them.
 
+**In use.** Each team was sent its folder, and by early October all three had
+opened their own results. So every team in the club now uses it.
+
+*Evidence (to be added):*
+
+- *(photo)* — 11117V with their results open
+- *(photo)* — 116X-323 with their results open
+- *(photo)* — 3778W with their results open
+- *(screenshot)* — the three build outputs listing each team's routines
+
 ---
 
 ## Videos

@@ -69,11 +69,14 @@ $env:PATH = "$DevKit;$env:PATH"
 
 # ------------------------------------------------------------- the project --
 $Ours = '117V-test-2026-07-27T06-53-04'
-$Live = Join-Path $env:USERPROFILE "Desktop\$Ours"
 $Snap = Join-Path $Root "reference\$Ours"
 $sync = $false
 if (-not $Project) {
-  if (Test-Path (Join-Path $Live 'src\autons.cpp')) { $Project = $Live; $sync = $true }
+  # Our live VEXcode project: on the Desktop, or in the Desktop\vex folder.
+  $Live = @("Desktop\$Ours", "Desktop\vex\$Ours") |
+    ForEach-Object { Join-Path $env:USERPROFILE $_ } |
+    Where-Object { Test-Path (Join-Path $_ 'src\autons.cpp') } | Select-Object -First 1
+  if ($Live) { $Project = $Live; $sync = $true }
   else { $Project = $Snap }
 }
 if (-not (Test-Path $Project)) { Fail "project folder not found: $Project" }

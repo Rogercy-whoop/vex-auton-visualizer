@@ -20,8 +20,10 @@ param(
 
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not $Project) {
-  $live = Join-Path $env:USERPROFILE 'Desktop\117V-test-2026-07-27T06-53-04'
-  $Project = if (Test-Path (Join-Path $live 'src\autons.cpp')) { $live } else { Join-Path $Root 'reference\117V-test-2026-07-27T06-53-04' }
+  $live = @('Desktop\117V-test-2026-07-27T06-53-04', 'Desktop\vex\117V-test-2026-07-27T06-53-04') |
+    ForEach-Object { Join-Path $env:USERPROFILE $_ } |
+    Where-Object { Test-Path (Join-Path $_ 'src\autons.cpp') } | Select-Object -First 1
+  $Project = if ($live) { $live } else { Join-Path $Root 'reference\117V-test-2026-07-27T06-53-04' }
 }
 
 # A fingerprint of every source file's last-write time: if any file is saved,

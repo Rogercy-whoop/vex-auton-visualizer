@@ -56,6 +56,13 @@ What I did with the template was operate it for two seasons, tune it
 empirically, and eventually read it line by line — which is where this
 project came from.
 
+## Other teams in the club
+
+Teams 11117V, 116X-323 and 3778W use the simulator with their own projects.
+Their code is theirs. It is **not included** in this repository: it was built
+into separate folders sent back to each team. Only their team names and a
+summary of the results appear here, with their permission.
+
 ## Third-party
 
 Field dimensions are taken from the public VEX 2025–26 V5RC *Push Back* field
