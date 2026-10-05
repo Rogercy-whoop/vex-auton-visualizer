@@ -80,6 +80,23 @@ Object.assign(ROBOT.sim, readSaved('model', null, {}));
 //  Routine state
 // ---------------------------------------------------------------------------
 const DEFAULT_START = { x: 24, y: 24, h: 0 };
+
+// Start placements written into the team's profile. Each may name its mirror:
+// the same pose turned 180° about the field centre, which is the other
+// alliance's matching start. Gyro-relative code runs identically from there; a
+// left-right reflection would not, because every turn would reverse.
+function profileStarts(r) {
+  const out = [];
+  for (const p of (ROBOT.starts && ROBOT.starts[r]) || []) {
+    out.push({ name: p.name, x: p.x, y: p.y, h: p.h });
+    if (p.mirror) out.push({ name: p.mirror, x: FIELD.SIZE - p.x, y: FIELD.SIZE - p.y, h: (p.h + 180) % 360 });
+  }
+  return out;
+}
+function defaultStart(r) {
+  const s = profileStarts(r)[0];
+  return s ? { x: s.x, y: s.y, h: s.h } : { ...DEFAULT_START };
+}
 let routine = null, sim = null;
 let start = { ...DEFAULT_START };
 let hooks = new Set();                 // action indices whose goal contact is intended
@@ -120,7 +137,7 @@ function setStatus(text, busy) {
 function selectRoutine(name) {
   routine = name;
   writeJSON(key('last'), name);
-  start = readSaved('start', name, { ...DEFAULT_START });
+  start = readSaved('start', name, defaultStart(name));
   hooks = new Set(readSaved('hooks', name, []));
   timeMs = 0; playing = false; $('btn-play').textContent = 'Play';
   syncStartInputs();
@@ -411,22 +428,26 @@ if (!CODE_FILES.length) $('btn-code').title = 'no source in out/source.js -- run
 function buildPresets() {
   const wrap = $('presets');
   wrap.innerHTML = '';
-  const list = readSaved('presets', routine, []);
-  if (!list.length) { wrap.innerHTML = '<div class="hint">no saved placements yet</div>'; return; }
-  list.forEach((p, i) => {
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.innerHTML = `<span class="nm" title="${p.x.toFixed(1)}, ${p.y.toFixed(1)} @ ${p.h.toFixed(0)}°">${esc(p.name)}</span><span class="del">×</span>`;
-    chip.querySelector('.nm').onclick = () => {
+  const fixed = profileStarts(routine);           // from the profile: cannot be deleted here
+  const list = readSaved('presets', routine, []); // saved in this browser
+  if (!fixed.length && !list.length) { wrap.innerHTML = '<div class="hint">no saved placements yet</div>'; return; }
+  const chip = (p, onDelete) => {
+    const c = document.createElement('span');
+    c.className = 'chip';
+    c.innerHTML = `<span class="nm" title="${p.x.toFixed(1)}, ${p.y.toFixed(1)} @ ${p.h.toFixed(0)}°">${esc(p.name)}</span>` +
+                  (onDelete ? '<span class="del">×</span>' : '');
+    c.querySelector('.nm').onclick = () => {
       start = { x: p.x, y: p.y, h: p.h };
       writeJSON(key('start', routine), start);
       syncStartInputs(); runSim(false); draw();
     };
-    chip.querySelector('.del').onclick = () => {
-      list.splice(i, 1); writeJSON(key('presets', routine), list); buildPresets();
-    };
-    wrap.appendChild(chip);
-  });
+    if (onDelete) c.querySelector('.del').onclick = onDelete;
+    wrap.appendChild(c);
+  };
+  fixed.forEach((p) => chip(p, null));
+  list.forEach((p, i) => chip(p, () => {
+    list.splice(i, 1); writeJSON(key('presets', routine), list); buildPresets();
+  }));
 }
 
 $('btn-remember').onclick = () => {
@@ -884,7 +905,7 @@ for (const name of Object.keys(LOGS)) { const o = document.createElement('option
 sel.onchange = (e) => selectRoutine(e.target.value);
 
 $('btn-fit').onclick = fitView;
-$('btn-default-start').onclick = () => { start = { ...DEFAULT_START }; writeJSON(key('start', routine), start); syncStartInputs(); runSim(false); draw(); };
+$('btn-default-start').onclick = () => { start = defaultStart(routine); writeJSON(key('start', routine), start); syncStartInputs(); runSim(false); draw(); };
 $('btn-ruler').onclick = (e) => { ruler.on = !ruler.on; e.target.classList.toggle('active', ruler.on); if (!ruler.on) $('ruler-readout').textContent = 'off'; draw(); };
 $('btn-clear').onclick = () => { measures.length = 0; $('measure-count').textContent = 'none'; draw(); };
 $('btn-theme').onclick = (e) => {

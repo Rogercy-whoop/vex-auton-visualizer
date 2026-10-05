@@ -56,6 +56,12 @@ What I did with the template was operate it for two seasons, tune it
 empirically, and eventually read it line by line — which is where this
 project came from.
 
+## Licence
+
+Everything in this repository is under the [MIT licence](LICENSE), **except**
+the control template under `reference/…/auto-Template/`. That is the coach's
+work, so it is not mine to license, and it is included as reference only.
+
 ## Other teams in the club
 
 Teams 11117V, 116X-323 and 3778W use the simulator with their own projects.

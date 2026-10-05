@@ -54,7 +54,7 @@ The project is three layers, kept deliberately apart:
 - **A moves table.** Every drive, turn and swing: what was asked for, what was achieved, the gap, the time taken, and whether it **settled** or hit its **timeout**.
 - **Contact.** The robot stops against walls, goals and loaders, and its encoders stop with it — so a blocked drive burns its whole timeout going nowhere, as on the field. A square hit squares the robot up. An oblique hit is genuinely unpredictable, so the simulation **stops and says so** rather than drawing a confident wrong path.
 - **Intake.** A faint capture wedge while collecting; blocks it passes over leave the field and count as carried. With the plate deployed against a loader, the stack is drawn down from the bottom and the rest fall.
-- **Placement.** Drag and rotate the start pose anywhere, snap to half tiles or 15°, and save named placements per routine. The routines use gyro-relative headings, so the same code can be tried from any corner.
+- **Placement.** Drag and rotate the start pose anywhere, snap to half tiles or 15°, and save named placements per routine. A team's real match starts go in its profile, each with its mirror for the other alliance, so the demo opens on them. The routines use gyro-relative headings, so the same code can be tried from any corner.
 - **Measuring.** Edge rulers, a straight-edge to line the robot up against, and measurement lines in inches, tiles and bearing — in the robot's own heading convention, so a measured angle can be typed straight into `turn_to_angle()`.
 - **A link to any view** — routine, placement, moment and open file — to send to a teammate.
 - **Total time**, front and centre, against the 15 s autonomous period.
@@ -156,6 +156,8 @@ A simulator is only useful if it is honest about where it is guessing.
 **The control template is not mine.** The files under `reference/…/auto-Template/` were supplied by our coach and closely resemble the public JAR Template. They are included so the stand-ins can be checked against the interface they imitate. [ATTRIBUTION.md](ATTRIBUTION.md) breaks this down file by file.
 
 Field dimensions come from the public VEX 2025–26 V5RC *Push Back* field specification drawings; the field is drawn from those measurements, and no VEX artwork is redistributed.
+
+**Licence:** [MIT](LICENSE), except the coach's control template under `reference/…/auto-Template/`, which is included as reference only. See [ATTRIBUTION.md](ATTRIBUTION.md#licence).
 
 ---
 

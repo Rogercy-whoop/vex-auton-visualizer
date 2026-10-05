@@ -28,5 +28,11 @@
     "load_factor": 0.75,
     "tau_s": 0.12,
     "v_dead": 0.6
+  },
+
+  "starts": {
+    "zuo":      [{ "name": "red left",   "x": 24.5,  "y": 83.5, "h": 90,  "mirror": "blue left" }],
+    "superzuo": [{ "name": "red left",   "x": 21.0,  "y": 87.3, "h": 0,   "mirror": "blue left" }],
+    "lanyou":   [{ "name": "blue right", "x": 116.0, "y": 83.6, "h": 270, "mirror": "red right" }]
   }
 }

@@ -97,6 +97,25 @@ motor cartridge, gear ratio and wheel diameter in your `main.cpp`.
 
 ---
 
+## `starts` — where each routine begins (optional)
+
+Each routine's start placement, so anyone opening the viewer sees it run from
+the right spot rather than from a corner. The first entry is the routine's
+default.
+
+```json
+"starts": {
+  "zuo": [{ "name": "red left", "x": 24.5, "y": 83.5, "h": 90, "mirror": "blue left" }]
+}
+```
+
+`x`, `y` and `h` are the numbers in the viewer's start-pose boxes. The easiest
+way to get them is to place the robot, then **Copy link to this view** and read
+them from the link. `mirror` (optional) adds the other alliance's matching
+start: the same pose turned 180° about the field centre.
+
+---
+
 ## What the simulator cannot handle yet
 
 - **`drive_to_point()` / `turn_to_point()`** steer by odometry, which is not
