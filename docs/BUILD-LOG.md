@@ -127,7 +127,13 @@ opened their own results. So every team in the club now uses it.
 - *(photo)* — 11117V with their results open
 - *(photo)* — 116X-323 with their results open
 - *(photo)* — 3778W with their results open
-- *(screenshot)* — the three build outputs listing each team's routines
+
+
+![build.bat output for all four teams](media/2026-10-four-teams-build.png)
+
+The build output for all four teams, rebuilt on 6 Oct 2026. Each project
+compiled unchanged, and every routine reproduced the action count and duration
+it had on 27 Sep.
 
 ---
 
