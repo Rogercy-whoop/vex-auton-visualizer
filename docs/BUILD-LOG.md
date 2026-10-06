@@ -27,7 +27,7 @@ clear how to credit it (it was later published with a file-by-file
 The technically hardest step, and the least impressive-looking one. Our
 `autons.cpp`, **unchanged**, compiled against a stand-in for the VEX SDK and ran
 on a laptop. The `time:15.2` line is printed by our own code — a timing line we
-wrote years ago for the robot's screen, now reporting simulated time.
+wrote for the robot's screen, now reporting simulated time.
 
 The same day: the first drawing of the Push Back field, built from the official
 field drawings rather than an image.
