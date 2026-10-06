@@ -948,8 +948,9 @@ const names = Object.keys(LOGS);
 if (!names.length) {
   setStatus('no logs found — run build.bat first', false);
 } else if (!applyLink()) {
+  // first visit: open on the first routine the profile gives a real start for
   const last = readRaw(key('last'));
-  routine = LOGS[last] ? last : names[0];
+  routine = LOGS[last] ? last : (names.find((n) => profileStarts(n).length) || names[0]);
   sel.value = routine;
   selectRoutine(routine);
 }

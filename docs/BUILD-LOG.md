@@ -65,7 +65,7 @@ Start placements can be named and saved per routine.
 
 ---
 
-## 26 Sep — for every team in the club
+## 26 Sep — ready for other teams
 
 - **Click a move, see its line of code.** Each recorded action now carries the
   file and line that made it, filled in by the compiler through a default
@@ -122,13 +122,6 @@ opens in a browser.
 **In use.** Each team was sent its folder, and by early October all three had
 opened their own results. So every team in the club now uses it.
 
-*Evidence (to be added):*
-
-- *(photo)* — 11117V with their results open
-- *(photo)* — 116X-323 with their results open
-- *(photo)* — 3778W with their results open
-
-
 ![build.bat output for all four teams](media/2026-10-four-teams-build.png)
 
 The build output for all four teams, rebuilt on 6 Oct 2026. Each project
@@ -137,14 +130,23 @@ it had on 27 Sep.
 
 ---
 
-## Videos
+## 6 Oct — real start poses, and a licence
 
-Screen recordings are too large to keep in the repository. They are linked
-here instead:
+- **The demo opens on our real match starts.** Saved placements live in each
+  viewer's own browser, so a visitor saw every routine start from the corner,
+  where four of the six stopped on a collision. The robot profile now carries the
+  start pose for `zuo`, `superzuo` and `lanyou`. Each names its mirror for the
+  other alliance: the same pose turned 180° about the field centre. Gyro-relative
+  code runs identically from there, and a left-right reflection would not,
+  because every turn would reverse.
+- **MIT licence** for everything except the coach's template, so other teams
+  can reuse and adapt it.
 
-- *(link)* — the old testing loop: edit, upload, walk to the field, reset every
-  block, run, fail
-- *(link)* — switching routines: the path drawing itself after each simulation
-- *(link)* — dragging the start placement and watching the path recompute
-- *(link)* — `lanyou` at the loader: the plate deploys, the stack is drawn down
-  and falls, the count climbs to six
+---
+
+## Video
+
+Screen recordings are too large to keep in the repository, so the demo is on
+YouTube instead:
+
+**[VEX Auton Visualizer: simulating our unmodified V5 autonomous code](https://youtu.be/s8Q0fXsbY5Q)** (2:56)

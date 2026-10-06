@@ -4,7 +4,7 @@
 
 It compiles a team's real, unmodified VEXcode project on a laptop, replays each autonomous routine through the robot's own PID control loop, and draws the result on a to-scale 2025–26 *Push Back* field: where each move really ends, which moves run out of time before they arrive, where the robot stops against a goal, which blocks the intake collects — and, for any moment on the timeline, which line of the team's code is running.
 
-**[Open the live demo](https://rogercy-whoop.github.io/vex-auton-visualizer/)** — our routines, in the browser, nothing to install.
+**[Open the live demo](https://rogercy-whoop.github.io/vex-auton-visualizer/)** — our routines, in the browser, nothing to install. · **[Watch the 3-minute video](https://youtu.be/s8Q0fXsbY5Q)**
 
 Built by VEX team **117V**, and designed so every team in our school's club can use it with their own robot and their own code.
 
@@ -122,7 +122,7 @@ NOTES-future.md        what comes next, and what each item would need
 Building the simulator meant reading our control template line by line. The full write-up is in **[docs/FINDINGS.md](docs/FINDINGS.md)**; the headline items:
 
 - **Every drive exits on timeout.** `drive_settle_error = 0` makes the settle branch of `PID::is_settled()` unreachable, so `drive_timeout` — not the distance argument — decides how far each move gets.
-- **It could not have settled anyway.** The drive loop's integral is disabled and `kd = 0`, so it is pure proportional control, which has an unavoidable steady-state error.
+- **A tighter band might not have helped.** The drive loop's integral is disabled and `kd = 0`, so it is pure proportional control, which leaves a steady-state error. A settle band smaller than that error can never be reached.
 - **That was a trade, not a bug.** Timeout-driven moves are inaccurate but repeatable, and they make the 15 s time budget exact. On a known field, that trade pays.
 - **Turn radius has a closed form.** With both loops saturated, `R = track × drive_max_v / (2 × heading_max_v)` — the ratio we had been tuning by feel.
 - **A blocked robot's encoders stop**, so its distance PID sees no progress and runs out its whole timeout.

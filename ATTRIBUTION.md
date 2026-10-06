@@ -7,7 +7,7 @@ which is which, file by file.
 
 | Path | What it is |
 |---|---|
-| `reference/…/src/autons.cpp` | **All five autonomous routines** — every PID constant, exit condition and timeout. This is the code the simulator exists to test. |
+| `reference/…/src/autons.cpp` | **All five autonomous routines, and `test`** — every PID constant, exit condition and timeout. This is the code the simulator exists to test. |
 | `reference/…/src/autofunction.cpp` | Intake and shooter helper routines |
 | `reference/…/src/user.cpp` | Driver control and mechanism bindings |
 | `reference/…/src/main.cpp` | Chassis configuration and auton selector (partly mine) |

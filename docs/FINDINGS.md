@@ -60,7 +60,7 @@ for two seasons without knowing that was the only mechanism available.
 
 ---
 
-## 3. The deeper reason: the settle branch could never have fired anyway
+## 3. The deeper reason: a small settle band might not have fired either
 
 This one came out of connecting two separate findings.
 
@@ -76,9 +76,14 @@ the motor dead band:
 e_steady = V_dead / kp = V_dead / 0.7
 ```
 
-For a V_dead around 1.5 V that is roughly 2 in. So a `settle_error` of 1 in —
-the value the turn loop uses — **would also never have fired**. It would have
-produced the same timeout behaviour, just less visibly.
+For a V_dead around 1.5 V that is roughly 2 in, so a `settle_error` of 1 in —
+the value the turn loop uses — **would never fire**. It would produce the same
+timeout behaviour, just less visibly. The simulator's dead band is 0.6 V
+(chosen so turns settle, as they do on the robot), which gives 0.86 in: just
+inside a 1 in band. So whether a 1 in band could ever fire depends on a number
+that has never been measured — and that is the point. A settle band tighter
+than the steady-state error can never be reached, and tuning by feel gives no
+way to know where that line is.
 
 **Making the drive converge needs one of two things**, not a tweak:
 widen `settle_error` past the steady-state error, or enable the integral
@@ -88,7 +93,7 @@ widen `settle_error` past the steady-state error, or enable the integral
 
 ## 4. So `settle_error = 0` is a trade, not a mistake
 
-Given that convergence was unreachable, setting the band to zero says: stop
+Given that convergence was marginal at best, setting the band to zero says: stop
 pretending, make the behaviour fully predictable. That buys two real things:
 
 - **Repeatability.** A timeout-driven move runs the same duration at the same
