@@ -56,7 +56,8 @@ usually exit early.
 
 **Evidence in my own code.** `autons.cpp` is full of `chassis.drive_timeout =
 700; / = 1600;` adjustments before individual moves. I had been tuning by time
-for two seasons without knowing that was the only mechanism available.
+for all of the 2025–26 season without knowing that was the only mechanism
+available.
 
 ---
 
